@@ -37,12 +37,12 @@ public class EasyNettyChannelHandlerTest {
     @Test
     void testConsumeByte() throws Exception {
         channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
-            boolean one = context.consumeByte((byte) 1).await();
-            boolean two = context.consumeByte((byte) 2).await();
-            boolean three = context.consumeByte((byte) 3).await();
-            context.writeByte((byte) (one ? 1 : 0)).await();
-            context.writeByte((byte) (two ? 1 : 0)).await();
-            context.writeByte((byte) (three ? 1 : 0)).await();
+            boolean one = context.consumeByte(1).await();
+            boolean two = context.consumeByte(2).await();
+            boolean three = context.consumeByte(3).await();
+            context.writeByte(one ? 1 : 0).await();
+            context.writeByte(two ? 1 : 0).await();
+            context.writeByte(three ? 1 : 0).await();
             return context.flush();
         }));
         channel.register();
