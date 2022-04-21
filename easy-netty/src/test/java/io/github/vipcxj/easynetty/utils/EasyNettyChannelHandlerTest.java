@@ -14,7 +14,7 @@ public class EasyNettyChannelHandlerTest {
 
     @BeforeEach
     void setup() {
-        channel = new EmbeddedChannel(false, false);
+        channel = new EmbeddedChannel();
     }
 
     private void sendByte(byte b) {
@@ -28,7 +28,6 @@ public class EasyNettyChannelHandlerTest {
             byte b = context.readByte().await();
             return context.writeByteAndFlush(b);
         }));
-        channel.register();
         sendByte((byte) 1);
         ByteBuf outbound = channel.readOutbound();
         Assertions.assertEquals(1, outbound.readByte());
@@ -45,7 +44,6 @@ public class EasyNettyChannelHandlerTest {
             context.writeByte(three ? 1 : 0).await();
             return context.flush();
         }));
-        channel.register();
         sendByte((byte) 1);
         sendByte((byte) 3);
         ByteBuf outbound = channel.readOutbound();
@@ -62,7 +60,6 @@ public class EasyNettyChannelHandlerTest {
             short s = context.readShort().await();
             return context.writeShortAndFlush(s);
         }));
-        channel.register();
         ByteBuf buf = Unpooled.buffer(2).writeShort(1);
         channel.writeInbound(buf);
         ByteBuf outbound = channel.readOutbound();
@@ -75,7 +72,6 @@ public class EasyNettyChannelHandlerTest {
             int i = context.readInt().await();
             return context.writeIntAndFlush(i);
         }));
-        channel.register();
         ByteBuf buf = Unpooled.buffer(4).writeInt(1);
         channel.writeInbound(buf);
         ByteBuf outbound = channel.readOutbound();
