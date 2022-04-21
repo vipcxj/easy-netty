@@ -14,12 +14,12 @@ public class AbstractRedisMessageTest {
 
     @BeforeEach
     void setup() {
-        channel = new EmbeddedChannel(false, false);
+        channel = new EmbeddedChannel();
     }
 
     void prepare(EasyNettyHandler handler) throws Exception {
         channel.pipeline().addLast(new EasyNettyChannelHandler(handler));
-        channel.register();
+        // channel.register();
     }
 
     void sendString(String msg) {
