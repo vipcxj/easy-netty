@@ -1,7 +1,6 @@
 package io.github.vipcxj.easynetty;
 
 import io.github.vipcxj.jasync.ng.spec.JPromise;
-import io.github.vipcxj.jasync.ng.spec.functional.JAsyncPromiseFunction0;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
@@ -92,6 +91,8 @@ public interface EasyNettyContext {
     JPromise<Boolean> consumeBytes(byte[] expectedBytes);
 
     JPromise<Boolean> consumeBytes(byte[] expectedBytes, int offset, int length);
+
+    JPromise<Void> skip(long length);
 
 //    <T> JPromise<T> readBigData(long length, JAsyncPromiseFunction0<ByteBuf, T> handler);
 

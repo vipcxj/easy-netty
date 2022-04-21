@@ -1,5 +1,6 @@
 package io.github.vipcxj.easynetty;
 
+import io.github.vipcxj.easynetty.utils.BufUtils;
 import io.github.vipcxj.easynetty.utils.CharUtils;
 import io.github.vipcxj.jasync.ng.spec.JContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
@@ -20,12 +21,12 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     private final int capacity;
     private boolean markMode;
+    private boolean hasCallRead;
     private boolean readComplete;
     private boolean preventRelease;
     private final SendBox<?> readSendBox;
     private final SendBox<?> writeSendBox;
     private JScheduler scheduler;
-    private ByteBuf buffer;
     private CompositeByteBuf buffers;
     private CharUtils.ByteStreamLike bsBuffers;
     protected ChannelHandlerContext context;
@@ -39,6 +40,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         this.capacity = capacity;
         this.enHandler = handler;
         this.markMode = false;
+        this.hasCallRead = false;
         this.readComplete = false;
         this.preventRelease = false;
         this.readSendBox = new SendBox<>()
@@ -55,11 +57,34 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) {
         this.context = ctx;
+        try {
+            if (ctx.channel().isRegistered()) {
+                channelRegistered(ctx);
+            }
+        } catch (Exception e) {
+            try {
+                exceptionCaught(ctx, e);
+            } catch (Exception exception) {
+                ctx.fireExceptionCaught(e);
+            }
+        }
     }
 
     @Override
     public void handlerRemoved(ChannelHandlerContext ctx) {
-        this.context = null;
+        try {
+            if (ctx.channel().isRegistered()) {
+                channelUnregistered(ctx);
+            }
+        } catch (Exception e) {
+            try {
+                exceptionCaught(ctx, e);
+            } catch (Exception exception) {
+                ctx.fireExceptionCaught(e);
+            }
+        } finally {
+            this.context = null;
+        }
     }
 
     @Override
@@ -68,14 +93,23 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         this.buffers = ctx.alloc().compositeBuffer();
         this.bsBuffers = new CharUtils.ByteBufByteStream(this.buffers);
         super.channelRegistered(ctx);
+        if (ctx.channel().isActive()) {
+            channelActive(ctx);
+        }
     }
 
     @Override
     public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
-        this.bsBuffers = null;
-        this.buffers.release();
-        this.buffers = null;
-        super.channelUnregistered(ctx);
+        try {
+            if (ctx.channel().isActive()) {
+                channelInactive(ctx);
+            }
+        } finally {
+            this.bsBuffers = null;
+            this.buffers.release();
+            this.buffers = null;
+            super.channelUnregistered(ctx);
+        }
     }
 
     @Override
@@ -127,16 +161,11 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        hasCallRead = true;
         ByteBuf buf = (ByteBuf) msg;
-        buffer = buf.retain();
-        try {
-            buffers.addComponent(true, buf);
-            if (readSendBox.isReady()) {
-                readSendBox.handle();
-            }
-        } finally {
-            buffer.release();
-            buffer = null;
+        buffers.addComponent(true, buf);
+        if (readSendBox.isReady()) {
+            readSendBox.handle();
         }
     }
 
@@ -147,6 +176,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
             readSendBox.handle();
             readComplete = false;
         }
+        hasCallRead = false;
         super.channelReadComplete(ctx);
     }
 
@@ -555,6 +585,29 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         return createPromise(sendBox);
     }
 
+    private final SendBoxHandler<Void> skipImpl = (sendBox) -> {
+        long remaining = sendBox.longArg(ARG_BYTES_REMAINING);
+        int readableBytes = buffers.readableBytes();
+        if (readableBytes >= remaining) {
+            buffers.readerIndex(buffers.readerIndex() + (int) remaining);
+            sendBox.setLongArg(ARG_BYTES_REMAINING, 0);
+            sendBox.resolve(null);
+            return true;
+        } else {
+            buffers.readerIndex(buffers.readerIndex() + readableBytes);
+            sendBox.setLongArg(ARG_BYTES_REMAINING, remaining - readableBytes);
+            return false;
+        }
+    };
+
+    @Override
+    public JPromise<Void> skip(long length) {
+        SendBox<Void> sendBox = (SendBox<Void>) this.readSendBox;
+        sendBox.install(skipImpl);
+        ARG_BYTES_REMAINING = sendBox.addLongArg(length);
+        return createPromise(sendBox);
+    }
+
     private JPromise<Void> createPromise(ChannelFuture future) {
         return createPromise((thunk, ctx) -> future.addListener(f -> {
             if (f.isSuccess()) {
@@ -651,14 +704,14 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     @Override
     public JPromise<Void> writeString(String s, Charset charset) {
-        byte[] bytes = s.getBytes(charset);
-        return writeBytes(bytes);
+        ByteBuf buf = BufUtils.fromString(s, charset);
+        return writeBuffer(buf);
     }
 
     @Override
     public JPromise<Void> writeStringAndFlush(String s, Charset charset) {
-        byte[] bytes = s.getBytes(charset);
-        return writeBytesAndFlush(bytes);
+        ByteBuf buf = BufUtils.fromString(s, charset);
+        return writeBufferAndFlush(buf);
     }
 
     class SendBox<E> implements BiConsumer<JThunk<E>, JContext> {
@@ -800,6 +853,10 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
             return longArgUsed++;
         }
 
+        public void setLongArg(int index, long arg) {
+            longArgs[index] = arg;
+        }
+
         public long longArg(int index) {
             return longArgs[index];
         }
@@ -828,7 +885,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
                 if (handler.handle(this)) {
                     prepareNextRead();
                     reset();
-                } else if (readComplete) {
+                } else if (readComplete && hasCallRead) {
                     thunk.reject(new IndexOutOfBoundsException(), context);
                     prepareNextRead();
                     reset();
