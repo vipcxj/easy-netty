@@ -24,6 +24,7 @@ public class RedisIntegerMessage extends AbstractRedisMessage {
     public JPromise<Long> value() {
         if (value == null) {
             value = Utils.readRedisNumber(context).await();
+            complete = true;
         }
         return JPromise.just(value);
     }

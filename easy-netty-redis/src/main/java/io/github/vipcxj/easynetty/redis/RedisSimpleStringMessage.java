@@ -24,6 +24,7 @@ public class RedisSimpleStringMessage extends AbstractRedisMessage {
     public JPromise<String> content() {
         if (content == null) {
             content = context.readUtf8Until('\r', '\n').await();
+            complete = true;
         }
         return JPromise.just(content);
     }

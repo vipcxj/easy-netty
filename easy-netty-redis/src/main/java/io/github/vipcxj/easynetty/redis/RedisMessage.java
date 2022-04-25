@@ -5,6 +5,7 @@ import io.github.vipcxj.easynetty.EasyNettyContext;
 public interface RedisMessage {
     RedisType type();
     EasyNettyContext context();
+    boolean isComplete();
     default RedisSimpleStringMessage asSimpleString() {
         throw new UnsupportedOperationException("Unable to transform to simple string message. The message type is " + type() + ".");
     }

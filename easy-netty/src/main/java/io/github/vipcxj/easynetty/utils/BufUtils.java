@@ -16,4 +16,6 @@ public class BufUtils {
         byte[] bytes = str.getBytes(charset);
         return Unpooled.wrappedBuffer(bytes);
     }
+
+    private BufUtils() {}
 }

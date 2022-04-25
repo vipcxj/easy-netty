@@ -8,6 +8,7 @@ import io.github.vipcxj.jasync.ng.spec.JScheduler;
 import io.github.vipcxj.jasync.ng.spec.JThunk;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -582,6 +583,27 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         ARG_BYTES_REMAINING = sendBox.addIntArg(length);
         ARG_BYTES_OFFSET = sendBox.addIntArg(offset);
         ARG_BYTES_LENGTH = sendBox.addIntArg(length);
+        return createPromise(sendBox);
+    }
+
+    private int ARG_BUF_MAX_LEN;
+    private final SendBoxHandler<ByteBuf> readSomeBufImpl = (SendBox<ByteBuf> sendBox) -> {
+        int maxLen = sendBox.intArg(ARG_BUF_MAX_LEN);
+        int toRead = Math.max(0, Math.min(maxLen, buffers.readableBytes()));
+        if (toRead == 0) {
+            sendBox.resolve(Unpooled.EMPTY_BUFFER);
+        } else {
+            ByteBuf buf = buffers.retainedSlice(buffers.readerIndex(), toRead);
+            sendBox.resolve(buf);
+        }
+        return true;
+    };
+
+    @Override
+    public JPromise<ByteBuf> readSomeBuf(int maxLen) {
+        SendBox<ByteBuf> sendBox = (SendBox<ByteBuf>) this.readSendBox;
+        sendBox.install(readSomeBufImpl);
+        ARG_BUF_MAX_LEN = sendBox.addIntArg(maxLen);
         return createPromise(sendBox);
     }
 

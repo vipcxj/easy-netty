@@ -96,6 +96,8 @@ public interface EasyNettyContext {
 
 //    <T> JPromise<T> readBigData(long length, JAsyncPromiseFunction0<ByteBuf, T> handler);
 
+    JPromise<ByteBuf> readSomeBuf(int maxLen);
+
     JPromise<Void> writeBuffer(ByteBuf buf);
 
     JPromise<Void> writeBufferAndFlush(ByteBuf buf);

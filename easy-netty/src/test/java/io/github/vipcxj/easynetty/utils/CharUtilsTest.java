@@ -56,4 +56,17 @@ public class CharUtilsTest {
             throw t;
         }
     }
+
+    private void func(Object... args) {
+
+    }
+
+    private void tmp() {
+        Object[] objects = new Object[10];
+        Object arg1 = new Object();
+        Object arg2 = int.class;
+        Object arg3 = RuntimeException.class;
+        func(arg1, arg2, arg3);
+        func(1);
+    }
 }
