@@ -1,6 +1,6 @@
 package io.github.vipcxj.easynetty.redis;
 
-import io.github.vipcxj.easynetty.EasyNettyChannelHandler;
+import io.github.vipcxj.easynetty.handler.EasyNettyChannelHandler;
 import io.github.vipcxj.easynetty.EasyNettyHandler;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.embedded.EmbeddedChannel;

@@ -1,6 +1,6 @@
 package io.github.vipcxj.easynetty.utils;
 
-import io.github.vipcxj.easynetty.EasyNettyChannelHandler;
+import io.github.vipcxj.easynetty.handler.EasyNettyChannelHandler;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -23,7 +23,7 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    void testReadByte() throws Exception {
+    void testReadByte() {
         channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
             byte b = context.readByte().await();
             return context.writeByteAndFlush(b);
@@ -34,7 +34,7 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    void testConsumeByte() throws Exception {
+    void testConsumeByte() {
         channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
             boolean one = context.consumeByte(1).await();
             boolean two = context.consumeByte(2).await();
@@ -55,7 +55,7 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    void testReadShort() throws Exception {
+    void testReadShort() {
         channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
             short s = context.readShort().await();
             return context.writeShortAndFlush(s);
@@ -67,7 +67,7 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    void testReadInt() throws Exception {
+    void testReadInt() {
         channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
             int i = context.readInt().await();
             return context.writeIntAndFlush(i);

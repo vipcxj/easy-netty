@@ -1,7 +1,10 @@
-package io.github.vipcxj.easynetty;
+package io.github.vipcxj.easynetty.handler;
 
+import io.github.vipcxj.easynetty.EasyNettyContext;
+import io.github.vipcxj.easynetty.EasyNettyHandler;
 import io.github.vipcxj.easynetty.utils.BufUtils;
 import io.github.vipcxj.easynetty.utils.CharUtils;
+import io.github.vipcxj.easynetty.utils.PromiseUtils;
 import io.github.vipcxj.jasync.ng.spec.JContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.github.vipcxj.jasync.ng.spec.JScheduler;
@@ -20,18 +23,18 @@ import java.util.function.BiConsumer;
 @SuppressWarnings({"unchecked", "unused"})
 public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implements EasyNettyContext {
 
-    private final int capacity;
-    private boolean markMode;
-    private boolean hasCallRead;
-    private boolean readComplete;
-    private boolean preventRelease;
-    private final SendBox<?> readSendBox;
-    private final SendBox<?> writeSendBox;
-    private JScheduler scheduler;
-    private CompositeByteBuf buffers;
-    private CharUtils.ByteStreamLike bsBuffers;
+    protected final int capacity;
+    protected boolean markMode;
+    protected boolean hasCallRead;
+    protected boolean readComplete;
+    protected boolean preventRelease;
+    protected final SendBox<?> readSendBox;
+    protected final SendBox<?> writeSendBox;
+    protected JScheduler scheduler;
+    protected CompositeByteBuf buffers;
+    protected CharUtils.ByteStreamLike bsBuffers;
     protected ChannelHandlerContext context;
-    private final EasyNettyHandler enHandler;
+    protected final EasyNettyHandler enHandler;
 
     public EasyNettyChannelHandler(EasyNettyHandler handler) {
         this(handler, 64 * 1024);
@@ -587,23 +590,28 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     }
 
     private int ARG_BUF_MAX_LEN;
+    private int ARG_IGNORE_EMPTY;
     private final SendBoxHandler<ByteBuf> readSomeBufImpl = (SendBox<ByteBuf> sendBox) -> {
         int maxLen = sendBox.intArg(ARG_BUF_MAX_LEN);
+        boolean ignoreEmpty = sendBox.intArg(ARG_IGNORE_EMPTY) != 0;
         int toRead = Math.max(0, Math.min(maxLen, buffers.readableBytes()));
-        if (toRead == 0) {
+        if (toRead == 0 && !ignoreEmpty) {
             sendBox.resolve(Unpooled.EMPTY_BUFFER);
         } else {
-            ByteBuf buf = buffers.retainedSlice(buffers.readerIndex(), toRead);
+            int readerIndex = buffers.readerIndex();
+            ByteBuf buf = buffers.retainedSlice(readerIndex, toRead);
+            buffers.readerIndex(readerIndex + toRead);
             sendBox.resolve(buf);
         }
         return true;
     };
 
     @Override
-    public JPromise<ByteBuf> readSomeBuf(int maxLen) {
+    public JPromise<ByteBuf> readSomeBuf(int maxLen, boolean ignoreEmpty) {
         SendBox<ByteBuf> sendBox = (SendBox<ByteBuf>) this.readSendBox;
         sendBox.install(readSomeBufImpl);
         ARG_BUF_MAX_LEN = sendBox.addIntArg(maxLen);
+        ARG_IGNORE_EMPTY = sendBox.addIntArg(ignoreEmpty ? 1 : 0);
         return createPromise(sendBox);
     }
 
@@ -628,18 +636,6 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         sendBox.install(skipImpl);
         ARG_BYTES_REMAINING = sendBox.addLongArg(length);
         return createPromise(sendBox);
-    }
-
-    private JPromise<Void> createPromise(ChannelFuture future) {
-        return createPromise((thunk, ctx) -> future.addListener(f -> {
-            if (f.isSuccess()) {
-                thunk.resolve(null, ctx);
-            } else if (f.isCancelled()) {
-                thunk.cancel();
-            } else {
-                thunk.reject(f.cause(), ctx);
-            }
-        }));
     }
 
     private static int ARG_WRITE_BYTE_BUF;
@@ -673,7 +669,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
         sendBox.install(writeBufferImpl);
         ARG_WRITE_BYTE_BUF = sendBox.addArg(buf);
         ARG_WRITE_FLUSH = sendBox.addIntArg(1);
-        return createPromise(sendBox).thenImmediate(this::createPromise);
+        return createPromise(sendBox).thenImmediate(PromiseUtils::toPromise);
     }
 
     @Override
