@@ -2,6 +2,7 @@ package io.github.vipcxj.easynetty.handler;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.easynetty.EasyNettyHandler;
+import io.github.vipcxj.easynetty.buffer.StreamBuffer;
 import io.github.vipcxj.easynetty.utils.BufUtils;
 import io.github.vipcxj.easynetty.utils.CharUtils;
 import io.github.vipcxj.easynetty.utils.PromiseUtils;
@@ -10,28 +11,22 @@ import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.github.vipcxj.jasync.ng.spec.JScheduler;
 import io.github.vipcxj.jasync.ng.spec.JThunk;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.CompositeByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
 
 import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.function.BiConsumer;
 
-@SuppressWarnings({"unchecked", "unused"})
-public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implements EasyNettyContext {
+@SuppressWarnings({"unchecked"})
+public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAdapter implements EasyNettyContext {
 
     protected final int capacity;
-    protected boolean markMode;
-    protected boolean hasCallRead;
-    protected boolean readComplete;
     protected boolean preventRelease;
     protected final SendBox<?> readSendBox;
     protected final SendBox<?> writeSendBox;
     protected JScheduler scheduler;
-    protected CompositeByteBuf buffers;
+    protected StreamBuffer buffers;
     protected CharUtils.ByteStreamLike bsBuffers;
     protected ChannelHandlerContext context;
     protected final EasyNettyHandler enHandler;
@@ -43,9 +38,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     public EasyNettyChannelHandler(EasyNettyHandler handler, int capacity) {
         this.capacity = capacity;
         this.enHandler = handler;
-        this.markMode = false;
-        this.hasCallRead = false;
-        this.readComplete = false;
+        this.buffers = new StreamBuffer();
         this.preventRelease = false;
         this.readSendBox = new SendBox<>()
                 .withObjectArgs(2)
@@ -59,81 +52,45 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     }
 
     @Override
-    public void handlerAdded(ChannelHandlerContext ctx) {
+    public void handlerAdded0(ChannelHandlerContext ctx) {
         this.context = ctx;
-        try {
-            if (ctx.channel().isRegistered()) {
-                channelRegistered(ctx);
-            }
-        } catch (Exception e) {
-            try {
-                exceptionCaught(ctx, e);
-            } catch (Exception exception) {
-                ctx.fireExceptionCaught(e);
-            }
-        }
     }
 
     @Override
-    public void handlerRemoved(ChannelHandlerContext ctx) {
-        try {
-            if (ctx.channel().isRegistered()) {
-                channelUnregistered(ctx);
-            }
-        } catch (Exception e) {
-            try {
-                exceptionCaught(ctx, e);
-            } catch (Exception exception) {
-                ctx.fireExceptionCaught(e);
-            }
-        } finally {
-            this.context = null;
-        }
+    public void handlerRemoved0(ChannelHandlerContext ctx) {
+        this.context = null;
     }
 
     @Override
-    public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+    public void channelRegistered0(ChannelHandlerContext ctx) throws Exception {
         this.scheduler = JScheduler.fromExecutorService(ctx.channel().eventLoop());
-        this.buffers = ctx.alloc().compositeBuffer();
-        this.bsBuffers = new CharUtils.ByteBufByteStream(this.buffers);
-        super.channelRegistered(ctx);
-        if (ctx.channel().isActive()) {
-            channelActive(ctx);
-        }
+        this.bsBuffers = new CharUtils.StreamBufferByteStream(this.buffers);
+        super.channelRegistered0(ctx);
     }
 
     @Override
-    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
-        try {
-            if (ctx.channel().isActive()) {
-                channelInactive(ctx);
-            }
-        } finally {
-            this.bsBuffers = null;
-            this.buffers.release();
-            this.buffers = null;
-            super.channelUnregistered(ctx);
-        }
+    public void channelUnregistered0(ChannelHandlerContext ctx) throws Exception {
+        this.bsBuffers = null;
+        this.buffers.release();
+        super.channelUnregistered0(ctx);
     }
 
     @Override
-    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+    public void channelActive0(ChannelHandlerContext ctx) throws Exception {
         this.enHandler.handle(this).onError(ctx::fireExceptionCaught).async(JContext.create(scheduler));
-        if (!context.channel().config().isAutoRead()) {
-            ctx.read();
-        }
-        super.channelActive(ctx);
+        maybeReadMore();
+        super.channelActive0(ctx);
     }
 
     @Override
-    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+    public void channelInactive0(ChannelHandlerContext ctx) throws Exception {
         if (readSendBox.isReady()) {
             readSendBox.cancel();
         }
         if (writeSendBox.isReady()) {
             writeSendBox.cancel();
         }
-        super.channelInactive(ctx);
+        super.channelInactive0(ctx);
     }
 
     @Override
@@ -154,20 +111,18 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     }
 
     public void mark() {
-        markMode = true;
-        buffers.markReaderIndex();
+        buffers.mark();
     }
 
     public void reset() {
-        markMode = false;
-        buffers.resetReaderIndex();
+        buffers.resetMark();
+        buffers.cleanMark();
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        hasCallRead = true;
         ByteBuf buf = (ByteBuf) msg;
-        buffers.addComponent(true, buf);
+        buffers.consumeBuffer(buf);
         if (readSendBox.isReady()) {
             readSendBox.handle();
         }
@@ -175,29 +130,17 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
-        if (readSendBox.isReady()) {
-            readComplete = true;
-            readSendBox.handle();
-            readComplete = false;
-        }
-        hasCallRead = false;
+        maybeReadMore();
         super.channelReadComplete(ctx);
     }
 
     private void tryBestRelease() {
-        if (!markMode) {
-            buffers.discardSomeReadBytes();
-        } else {
-            int index = buffers.readerIndex();
-            buffers.resetReaderIndex();
-            buffers.discardSomeReadBytes();
-            buffers.readerIndex(index);
-        }
+        buffers.freeSomeBytes();
     }
 
     private void maybeReadMore() {
         if (!context.channel().config().isAutoRead()) {
-            if (buffers.readableBytes() < capacity / 2) {
+            if (buffers.readableBytes() <= capacity / 2) {
                 context.read();
             }
         }
@@ -212,9 +155,6 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     }
 
     private void prepareNextRead() {
-        if (!markMode) {
-            buffers.markReaderIndex();
-        }
         tryBestRelease();
         maybeReadMore();
     }
@@ -243,7 +183,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     private int ARG_CHAR_REMAINING;
     private final SendBoxHandler<Boolean> consumeByteImpl = (SendBox<Boolean> sendBox) -> {
         if (buffers.isReadable()) {
-            if (buffers.getByte(buffers.readerIndex()) == sendBox.byteArg(ARG_EXPECT)) {
+            if (buffers.getByte() == sendBox.byteArg(ARG_EXPECT)) {
                 buffers.readByte();
                 sendBox.resolve(true);
             } else {
@@ -279,7 +219,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     private final SendBoxHandler<Boolean> consumeShortImpl = (SendBox<Boolean> sendBox) -> {
         if (buffers.isReadable(2)) {
-            if (buffers.getShort(buffers.readerIndex()) == sendBox.shortArg(ARG_EXPECT)) {
+            if (buffers.getShort() == sendBox.shortArg(ARG_EXPECT)) {
                 buffers.readShort();
                 sendBox.resolve(true);
             } else {
@@ -316,7 +256,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
 
     private final SendBoxHandler<Boolean> consumeIntImpl = (SendBox<Boolean> sendBox) -> {
         if (buffers.isReadable(4)) {
-            if (buffers.getInt(buffers.readerIndex()) == sendBox.intArg(ARG_EXPECT)) {
+            if (buffers.getInt() == sendBox.intArg(ARG_EXPECT)) {
                 buffers.readInt();
                 sendBox.resolve(true);
             } else {
@@ -444,8 +384,9 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
             int cp = CharUtils.readUtf8CodePoint(bsBuffers, charRemaining);
             int cpLen = buffers.readerIndex() - readerIndex;
             if (!CharUtils.isRemaining(cp)) {
+                buffers.readerIndex(readerIndex);
                 if (matchCpUntil(sendBox, cp, cpLen)) {
-                    output.writeBytes(buffers, readerIndex, cpLen);
+                    buffers.readBuf(output, cpLen);
                     if (mode != UntilMode.INCLUDE) {
                         int cpTestedLen = sendBox.intArg(ARG_CP_UNTIL_TESTED_LEN);
                         if (mode == UntilMode.EXCLUDE) {
@@ -458,7 +399,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
                     sendBox.resolve(null);
                     return true;
                 } else {
-                    output.writeBytes(buffers, readerIndex, cpLen);
+                    buffers.readBuf(output, cpLen);
                 }
             } else {
                 int cpTestedLen = sendBox.intArg(ARG_CP_UNTIL_TESTED_LEN);
@@ -526,9 +467,11 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
             sendBox.setIntArg(ARG_BYTES_REMAINING, 0);
             sendBox.resolve(null);
             return true;
-        } else {
+        } else if (readableBytes > 0){
             buffers.readBytes(outputBytes, currentOffset, readableBytes);
             sendBox.setIntArg(ARG_BYTES_REMAINING, remaining - readableBytes);
+            return false;
+        } else {
             return false;
         }
     };
@@ -581,7 +524,7 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     @Override
     public JPromise<Boolean> consumeBytes(byte[] expectedBytes, int offset, int length) {
         SendBox<Boolean> sendBox = (SendBox<Boolean>) this.readSendBox;
-        sendBox.install(consumeByteImpl);
+        sendBox.install(consumeBytesImpl);
         ARG_BYTES_EXPECT = sendBox.addArg(expectedBytes);
         ARG_BYTES_REMAINING = sendBox.addIntArg(length);
         ARG_BYTES_OFFSET = sendBox.addIntArg(offset);
@@ -590,28 +533,21 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
     }
 
     private int ARG_BUF_MAX_LEN;
-    private int ARG_IGNORE_EMPTY;
     private final SendBoxHandler<ByteBuf> readSomeBufImpl = (SendBox<ByteBuf> sendBox) -> {
         int maxLen = sendBox.intArg(ARG_BUF_MAX_LEN);
-        boolean ignoreEmpty = sendBox.intArg(ARG_IGNORE_EMPTY) != 0;
         int toRead = Math.max(0, Math.min(maxLen, buffers.readableBytes()));
-        if (toRead == 0 && !ignoreEmpty) {
-            sendBox.resolve(Unpooled.EMPTY_BUFFER);
-        } else {
-            int readerIndex = buffers.readerIndex();
-            ByteBuf buf = buffers.retainedSlice(readerIndex, toRead);
-            buffers.readerIndex(readerIndex + toRead);
+        if (toRead > 0) {
+            ByteBuf buf = buffers.readBuf(context.alloc(), toRead);
             sendBox.resolve(buf);
         }
         return true;
     };
 
     @Override
-    public JPromise<ByteBuf> readSomeBuf(int maxLen, boolean ignoreEmpty) {
+    public JPromise<ByteBuf> readSomeBuf(int maxLen) {
         SendBox<ByteBuf> sendBox = (SendBox<ByteBuf>) this.readSendBox;
         sendBox.install(readSomeBufImpl);
         ARG_BUF_MAX_LEN = sendBox.addIntArg(maxLen);
-        ARG_IGNORE_EMPTY = sendBox.addIntArg(ignoreEmpty ? 1 : 0);
         return createPromise(sendBox);
     }
 
@@ -901,10 +837,6 @@ public class EasyNettyChannelHandler extends ChannelInboundHandlerAdapter implem
             prepare(thunk, context);
             try {
                 if (handler.handle(this)) {
-                    prepareNextRead();
-                    reset();
-                } else if (readComplete && hasCallRead) {
-                    thunk.reject(new IndexOutOfBoundsException(), context);
                     prepareNextRead();
                     reset();
                 }

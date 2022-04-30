@@ -1,6 +1,7 @@
 package io.github.vipcxj.easynetty.utils;
 
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
 
@@ -27,6 +28,7 @@ public class CharUtilsTest {
     }
 
     @Test
+    @Disabled("Disabled because this test consume too much time.")
     public void testReadUtf8CodePoint() {
         ByteBuffer buffer = ByteBuffer.allocate(4);
         CharUtils.ByteStreamLike bsBuffer = new CharUtils.ByteBufferByteStream(buffer);

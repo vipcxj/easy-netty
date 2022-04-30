@@ -1,5 +1,6 @@
 package io.github.vipcxj.easynetty.utils;
 
+import io.github.vipcxj.easynetty.buffer.StreamBuffer;
 import io.netty.buffer.ByteBuf;
 
 import java.nio.ByteBuffer;
@@ -177,11 +178,11 @@ public class CharUtils {
         }
     }
 
-    public static class ByteBufByteStream implements ByteStreamLike {
+    public static class StreamBufferByteStream implements ByteStreamLike {
 
-        private final ByteBuf buf;
+        private final StreamBuffer buf;
 
-        public ByteBufByteStream(ByteBuf buf) {
+        public StreamBufferByteStream(StreamBuffer buf) {
             this.buf = buf;
         }
 
