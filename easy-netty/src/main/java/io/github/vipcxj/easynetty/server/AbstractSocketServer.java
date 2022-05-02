@@ -3,6 +3,7 @@ package io.github.vipcxj.easynetty.server;
 import io.github.vipcxj.easynetty.utils.PlatformIndependent;
 import io.github.vipcxj.easynetty.utils.PromiseUtils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
+import io.github.vipcxj.jasync.ng.spec.JPromiseTrigger;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -21,6 +22,7 @@ public abstract class AbstractSocketServer implements Server {
     protected final EventLoopGroup workerGroup;
     protected final boolean ownWorkerGroup;
     protected Channel channel;
+    private JPromiseTrigger<Void> readyTrigger;
 
     protected AbstractSocketServer(int port, EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
         this.port = port;
@@ -28,6 +30,8 @@ public abstract class AbstractSocketServer implements Server {
         this.ownBossGroup = false;
         this.workerGroup = workerGroup;
         this.ownWorkerGroup = false;
+        this.readyTrigger = JPromise.createTrigger();
+        this.readyTrigger.start();
     }
 
     protected AbstractSocketServer(int port) {
@@ -36,6 +40,8 @@ public abstract class AbstractSocketServer implements Server {
         this.ownBossGroup = true;
         this.workerGroup = PlatformIndependent.createEventLoopGroup();
         this.ownWorkerGroup = true;
+        this.readyTrigger = JPromise.createTrigger();
+        this.readyTrigger.start();
     }
 
     private Class<? extends ServerSocketChannel> getServerSocketChannelClass() {
@@ -49,12 +55,26 @@ public abstract class AbstractSocketServer implements Server {
     }
 
     @Override
+    public JPromise<Void> untilReady() {
+        return readyTrigger.getPromise();
+    }
+
+    @Override
     public JPromise<Void> bind() {
         ServerBootstrap bootstrap = new ServerBootstrap()
                 .group(bossGroup, workerGroup)
                 .channel(getServerSocketChannelClass());
         configure(bootstrap);
-        ChannelFuture future = bootstrap.bind();
+        ChannelFuture future = bootstrap.bind(port);
+        future.addListener(f -> {
+            if (f.isSuccess()) {
+                readyTrigger.resolve(null);
+            } else if (f.isCancelled()) {
+                readyTrigger.cancel();
+            } else {
+                readyTrigger.reject(f.cause());
+            }
+        });
         this.channel = future.channel();
         this.channel.closeFuture().addListener(f -> {
             if (ownWorkerGroup) {

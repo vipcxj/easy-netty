@@ -1,5 +1,8 @@
 package io.github.vipcxj.easynetty;
 
+import io.github.vipcxj.easynetty.handler.UntilBox;
+import io.github.vipcxj.easynetty.handler.UntilMode;
+import io.github.vipcxj.easynetty.utils.Tuple2OwB;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -12,6 +15,12 @@ public interface EasyNettyContext {
 
     ChannelHandlerContext getChannelContext();
 
+    void mark();
+
+    void resetMark();
+
+    void cleanMark();
+
     JPromise<Byte> readByte();
 
     JPromise<Boolean> consumeByte(int expected);
@@ -23,6 +32,10 @@ public interface EasyNettyContext {
     JPromise<Integer> readInt();
 
     JPromise<Boolean> consumeInt(int expected);
+
+    JPromise<Long> readLong();
+
+    JPromise<Boolean> consumeLong(long expected);
 
     JPromise<Integer> readUtf8CodePoint();
 
@@ -96,7 +109,13 @@ public interface EasyNettyContext {
 
 //    <T> JPromise<T> readBigData(long length, JAsyncPromiseFunction0<ByteBuf, T> handler);
 
-    JPromise<ByteBuf> readSomeBuf(int maxLen);
+    JPromise<ByteBuf> readSomeBuf(int maxLen, boolean ignoreEmpty);
+
+    default JPromise<ByteBuf> readSomeBuf(int maxLen) {
+        return readSomeBuf(maxLen, false);
+    }
+
+    JPromise<UntilBox> readSomeBufUntilAny(UntilBox untilBox);
 
     JPromise<Void> writeBuffer(ByteBuf buf);
 
@@ -132,9 +151,5 @@ public interface EasyNettyContext {
 
     default JPromise<Void> flush() {
         return writeBufferAndFlush(Unpooled.EMPTY_BUFFER);
-    }
-
-    enum UntilMode {
-        INCLUDE, EXCLUDE, SKIP
     }
 }

@@ -3,14 +3,13 @@ package io.github.vipcxj.easynetty.handler;
 import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.easynetty.EasyNettyHandler;
 import io.github.vipcxj.easynetty.buffer.StreamBuffer;
-import io.github.vipcxj.easynetty.utils.BufUtils;
-import io.github.vipcxj.easynetty.utils.CharUtils;
-import io.github.vipcxj.easynetty.utils.PromiseUtils;
+import io.github.vipcxj.easynetty.utils.*;
 import io.github.vipcxj.jasync.ng.spec.JContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.github.vipcxj.jasync.ng.spec.JScheduler;
 import io.github.vipcxj.jasync.ng.spec.JThunk;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 
@@ -70,6 +69,8 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     @Override
     public void channelUnregistered0(ChannelHandlerContext ctx) throws Exception {
+        readSendBox.cancel();
+        writeSendBox.cancel();
         this.bsBuffers = null;
         this.buffers.release();
         super.channelUnregistered0(ctx);
@@ -114,8 +115,11 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         buffers.mark();
     }
 
-    public void reset() {
+    public void resetMark() {
         buffers.resetMark();
+    }
+
+    public void cleanMark() {
         buffers.cleanMark();
     }
 
@@ -275,6 +279,42 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         return createPromise(sendBox);
     }
 
+    private final SendBoxHandler<Long> readLongImpl = (sendBox) -> {
+        if (buffers.isReadable(8)) {
+            sendBox.resolve(buffers.readLong());
+            return true;
+        }
+        return false;
+    };
+
+    @Override
+    public JPromise<Long> readLong() {
+        SendBox<Long> sendBox = (SendBox<Long>) this.readSendBox;
+        sendBox.install(readLongImpl);
+        return createPromise(sendBox);
+    }
+
+    private final SendBoxHandler<Boolean> consumeLongImpl = (sendBox) -> {
+        if (buffers.isReadable(8)) {
+            if (buffers.getLong() == sendBox.longArg(ARG_EXPECT)) {
+                buffers.readLong();
+                sendBox.resolve(true);
+            } else {
+                sendBox.resolve(false);
+            }
+            return true;
+        }
+        return false;
+    };
+
+    @Override
+    public JPromise<Boolean> consumeLong(long expect) {
+        SendBox<Boolean> sendBox = (SendBox<Boolean>) this.readSendBox;
+        sendBox.install(consumeLongImpl);
+        ARG_EXPECT = sendBox.addLongArg(expect);
+        return createPromise(sendBox);
+    }
+
     private final SendBoxHandler<Integer> readUtf8CodePointImpl = (SendBox<Integer> sendBox) -> {
         if (!buffers.isReadable()) {
             return false;
@@ -305,11 +345,16 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         }
         int codePoint = sendBox.intArg(ARG_EXPECT);
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
+        if (charRemaining == 0) {
+            mark();
+        }
         int cp = CharUtils.readUtf8CodePoint(bsBuffers, charRemaining);
         if (!CharUtils.isRemaining(cp)) {
             if (cp == codePoint) {
+                cleanMark();
                 sendBox.resolve(true);
             } else {
+                resetMark();
                 sendBox.resolve(false);
             }
             sendBox.setIntArg(ARG_CHAR_REMAINING, 0);
@@ -334,7 +379,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     private int ARG_CP_UNTIL1;
     private int ARG_CP_UNTIL2;
     private int ARG_CP_UNTIL_NUM;
-    private int ARG_CP_UNTIL_MODE;
+    private int ARG_UNTIL_MODE;
     private int ARG_CP_UNTIL_TESTED_LEN;
     private int ARG_CP_UNTIL_TESTED_INDEX;
 
@@ -378,7 +423,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         }
         ByteBuf output = sendBox.arg(ARG_BYTE_BUF_OUTPUT);
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
-        UntilMode mode = sendBox.arg(ARG_CP_UNTIL_MODE);
+        UntilMode mode = sendBox.arg(ARG_UNTIL_MODE);
         do {
             int readerIndex = buffers.readerIndex();
             int cp = CharUtils.readUtf8CodePoint(bsBuffers, charRemaining);
@@ -422,7 +467,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (cpNum > 2) {
             ARG_CP_UNTIL2 = this.readSendBox.addIntArg(cp2);
         }
-        ARG_CP_UNTIL_MODE = this.readSendBox.addArg(mode);
+        ARG_UNTIL_MODE = this.readSendBox.addArg(mode);
         ARG_CP_UNTIL_TESTED_INDEX = this.readSendBox.addIntArg(0);
         ARG_CP_UNTIL_TESTED_LEN = this.readSendBox.addIntArg(0);
     }
@@ -494,21 +539,29 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private int ARG_BYTES_EXPECT;
     private final SendBoxHandler<Boolean> consumeBytesImpl = (SendBox<Boolean> sendBox) -> {
+        int length = sendBox.intArg(ARG_BYTES_LENGTH);
+        if (length == 0) {
+            sendBox.resolve(true);
+        }
+        int remaining = sendBox.intArg(ARG_BYTES_REMAINING);
+        if (length == remaining) {
+            mark();
+        }
         byte[] expectedBytes = sendBox.arg(ARG_BYTES_EXPECT);
         int offset = sendBox.intArg(ARG_BYTES_OFFSET);
-        int length = sendBox.intArg(ARG_BYTES_LENGTH);
-        int remaining = sendBox.intArg(ARG_BYTES_REMAINING);
         int currentOffset = offset + length - remaining;
         int readableBytes = buffers.readableBytes();
         int toReads = Math.min(readableBytes, remaining);
         for (int i = currentOffset; i < currentOffset + toReads; ++i) {
             if (buffers.readByte() != expectedBytes[i]) {
                 sendBox.resolve(false);
+                resetMark();
                 return true;
             }
         }
         if (readableBytes >= remaining) {
             sendBox.resolve(true);
+            cleanMark();
             return true;
         } else {
             sendBox.setIntArg(ARG_BYTES_REMAINING, remaining - readableBytes);
@@ -533,21 +586,96 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     }
 
     private int ARG_BUF_MAX_LEN;
+    private int ARG_IGNORE_EMPTY;
     private final SendBoxHandler<ByteBuf> readSomeBufImpl = (SendBox<ByteBuf> sendBox) -> {
         int maxLen = sendBox.intArg(ARG_BUF_MAX_LEN);
+        int ignoreEmpty = sendBox.intArg(ARG_IGNORE_EMPTY);
         int toRead = Math.max(0, Math.min(maxLen, buffers.readableBytes()));
         if (toRead > 0) {
             ByteBuf buf = buffers.readBuf(context.alloc(), toRead);
             sendBox.resolve(buf);
+            return true;
+        } else if (ignoreEmpty == 0) {
+            sendBox.resolve(Unpooled.EMPTY_BUFFER);
+            return true;
+        } else {
+            return false;
         }
+    };
+
+    @Override
+    public JPromise<ByteBuf> readSomeBuf(int maxLen, boolean ignoreEmpty) {
+        SendBox<ByteBuf> sendBox = (SendBox<ByteBuf>) this.readSendBox;
+        sendBox.install(readSomeBufImpl);
+        ARG_BUF_MAX_LEN = sendBox.addIntArg(maxLen);
+        ARG_IGNORE_EMPTY = sendBox.addIntArg(ignoreEmpty ? 1 : 0);
+        return createPromise(sendBox);
+    }
+
+    private int ARG_UNTIL_BOX;
+    private final SendBoxHandler<UntilBox> readSomeBufUntilAnyImpl = (sendBox) -> {
+        UntilBox untilBox = sendBox.arg(ARG_UNTIL_BOX);
+        if (buffers.isReadable()) {
+            byte[][] untils = untilBox.getUntils();
+            int[] matched = untilBox.getMatched();
+            Arrays.fill(matched, 0);
+            int start = buffers.readerIndex();
+            do {
+                for (int i = 0; i < untils.length; ++i) {
+                    byte[] until = untils[i];
+                    int index = matched[i];
+                    if (index == until.length) {
+                        untilBox.setMatchedUntil(i);
+                        untilBox.setSuccess(true);
+                        int end = buffers.readerIndex();
+                        buffers.readerIndex(start);
+                        switch (untilBox.getMode()) {
+                            case SKIP:
+                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
+                                buffers.readerIndex(end);
+                                break;
+                            case INCLUDE:
+                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - start));
+                                break;
+                            case EXCLUDE:
+                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
+                                break;
+                            default:
+                                throw new IllegalStateException("This is impossible.");
+                        }
+                        sendBox.resolve(untilBox);
+                        return true;
+                    }
+                    if (until[index] == buffers.getByte()) {
+                        matched[i]++;
+                    } else {
+                        matched[i] = 0;
+                    }
+                }
+                buffers.readByte();
+            } while (buffers.isReadable());
+            int len = 0;
+            for (int i = 0; i < matched.length; ++i) {
+                int m = matched[i];
+                matched[i] = 0;
+                len = Math.max(m, len);
+            }
+            int end = buffers.readerIndex() - len;
+            buffers.readerIndex(start);
+            untilBox.setBuf(buffers.readBuf(context.alloc(), end - start));
+        } else {
+            untilBox.setBuf(Unpooled.EMPTY_BUFFER);
+        }
+        untilBox.setSuccess(false);
+        sendBox.resolve(untilBox);
         return true;
     };
 
     @Override
-    public JPromise<ByteBuf> readSomeBuf(int maxLen) {
-        SendBox<ByteBuf> sendBox = (SendBox<ByteBuf>) this.readSendBox;
-        sendBox.install(readSomeBufImpl);
-        ARG_BUF_MAX_LEN = sendBox.addIntArg(maxLen);
+    public JPromise<UntilBox> readSomeBufUntilAny(UntilBox untilBox) {
+        SendBox<UntilBox> sendBox = (SendBox<UntilBox>) this.readSendBox;
+        sendBox.install(readSomeBufUntilAnyImpl);
+        ARG_UNTIL_BOX = sendBox.addArg(untilBox);
         return createPromise(sendBox);
     }
 
@@ -824,7 +952,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         }
 
         public void cancel() {
-            thunk.cancel();
+            if (thunk != null) {
+                thunk.cancel();
+            }
         }
 
         public void handle() {

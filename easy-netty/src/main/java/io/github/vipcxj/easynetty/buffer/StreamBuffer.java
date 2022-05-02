@@ -51,25 +51,26 @@ public class StreamBuffer {
             return;
         }
         int currentReadable = moveToValid();
-        if ((currentOffset + offset >= 0) || (offset > 0 && offset <= currentReadable)) {
+        if ((offset < 0 && currentOffset + offset >= 0) || (offset > 0 && offset <= currentReadable)) {
             this.currentOffset += offset;
-        }
-        UnsafeLinkedList.Node<ByteBuf> node = offset > 0 ? currentNode.getNext() : buffers.getHead();
-        offset = offset > 0 ? this.readerIndex + currentReadable : 0;
-        while (node != null) {
-            ByteBuf current = node.getData();
-            if (readerIndex < offset + current.writerIndex()) {
-                this.currentNode = node;
-                this.currentOffset = readerIndex - offset;
-                break;
+        } else {
+            UnsafeLinkedList.Node<ByteBuf> node = offset > 0 ? currentNode.getNext() : buffers.getHead();
+            offset = offset > 0 ? this.readerIndex + currentReadable : 0;
+            while (node != null) {
+                ByteBuf current = node.getData();
+                if (readerIndex < offset + current.writerIndex()) {
+                    this.currentNode = node;
+                    this.currentOffset = readerIndex - offset;
+                    break;
+                }
+                offset += current.writerIndex();
+                node = node.getNext();
             }
-            offset += current.writerIndex();
-            node = node.getNext();
-        }
-        if (node == null) {
-            assert !buffers.isEmpty();
-            this.currentNode = null;
-            this.currentOffset = 0;
+            if (node == null) {
+                assert !buffers.isEmpty();
+                this.currentNode = null;
+                this.currentOffset = 0;
+            }
         }
         this.readerIndex = readerIndex;
     }
@@ -419,7 +420,7 @@ public class StreamBuffer {
             int currentOffset = this.currentOffset;
             int remaining = length;
             while (remaining > 0) {
-                output.addComponent(true, currentNode.getData().retainedSlice());
+                output.addComponent(true, this.currentNode.getData().retainedSlice());
                 int size = Math.min(currentReadable, remaining);
                 this.currentOffset += size;
                 remaining -= size;
