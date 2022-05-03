@@ -21,7 +21,6 @@ import java.util.function.BiConsumer;
 public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAdapter implements EasyNettyContext {
 
     protected final int capacity;
-    protected boolean preventRelease;
     protected final SendBox<?> readSendBox;
     protected final SendBox<?> writeSendBox;
     protected JScheduler scheduler;
@@ -29,6 +28,8 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     protected CharUtils.ByteStreamLike bsBuffers;
     protected ChannelHandlerContext context;
     protected final EasyNettyHandler enHandler;
+    protected JPromise<Void> promise;
+    protected final Object UNRESOLVED = new Object();
 
     public EasyNettyChannelHandler(EasyNettyHandler handler) {
         this(handler, 64 * 1024);
@@ -38,7 +39,6 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         this.capacity = capacity;
         this.enHandler = handler;
         this.buffers = new StreamBuffer();
-        this.preventRelease = false;
         this.readSendBox = new SendBox<>()
                 .withObjectArgs(2)
                 .withByteArgs(1)
@@ -56,9 +56,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     }
 
     @Override
-    public void handlerRemoved0(ChannelHandlerContext ctx) {
-        this.context = null;
-    }
+    public void handlerRemoved0(ChannelHandlerContext ctx) {}
 
     @Override
     public void channelRegistered0(ChannelHandlerContext ctx) throws Exception {
@@ -78,13 +76,15 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     @Override
     public void channelActive0(ChannelHandlerContext ctx) throws Exception {
-        this.enHandler.handle(this).onError(ctx::fireExceptionCaught).async(JContext.create(scheduler));
+        promise = this.enHandler.handle(this).onError(ctx::fireExceptionCaught);
+        promise.async(JContext.create(scheduler));
         maybeReadMore();
         super.channelActive0(ctx);
     }
 
     @Override
     public void channelInactive0(ChannelHandlerContext ctx) throws Exception {
+        promise.cancel();
         if (readSendBox.isReady()) {
             readSendBox.cancel();
         }
@@ -170,10 +170,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Byte> readByteImpl = (SendBox<Byte> sendBox) -> {
         if (buffers.isReadable()) {
-            sendBox.resolve(buffers.readByte());
-            return true;
+            return buffers.readByte();
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -189,13 +188,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (buffers.isReadable()) {
             if (buffers.getByte() == sendBox.byteArg(ARG_EXPECT)) {
                 buffers.readByte();
-                sendBox.resolve(true);
+                return true;
             } else {
-                sendBox.resolve(false);
+                return false;
             }
-            return true;
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -208,10 +206,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Short> readShortImpl = (SendBox<Short> sendBox) -> {
         if (buffers.isReadable(2)) {
-            sendBox.resolve(buffers.readShort());
-            return true;
+            return buffers.readShort();
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -225,13 +222,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (buffers.isReadable(2)) {
             if (buffers.getShort() == sendBox.shortArg(ARG_EXPECT)) {
                 buffers.readShort();
-                sendBox.resolve(true);
+                return true;
             } else {
-                sendBox.resolve(false);
+                return false;
             }
-            return true;
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -244,10 +240,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Integer> readIntImpl = (SendBox<Integer> sendBox) -> {
         if (buffers.isReadable(4)) {
-            sendBox.resolve(buffers.readInt());
-            return true;
+            return buffers.readInt();
         } else {
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -262,13 +257,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (buffers.isReadable(4)) {
             if (buffers.getInt() == sendBox.intArg(ARG_EXPECT)) {
                 buffers.readInt();
-                sendBox.resolve(true);
+                return true;
             } else {
-                sendBox.resolve(false);
+                return false;
             }
-            return true;
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -281,10 +275,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Long> readLongImpl = (sendBox) -> {
         if (buffers.isReadable(8)) {
-            sendBox.resolve(buffers.readLong());
-            return true;
+            return buffers.readLong();
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -298,13 +291,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (buffers.isReadable(8)) {
             if (buffers.getLong() == sendBox.longArg(ARG_EXPECT)) {
                 buffers.readLong();
-                sendBox.resolve(true);
+                return true;
             } else {
-                sendBox.resolve(false);
+                return false;
             }
-            return true;
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -317,17 +309,15 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Integer> readUtf8CodePointImpl = (SendBox<Integer> sendBox) -> {
         if (!buffers.isReadable()) {
-            return false;
+            return UNRESOLVED;
         }
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
         int cp = CharUtils.readUtf8CodePoint(bsBuffers, charRemaining);
         if (!CharUtils.isRemaining(cp)) {
-            sendBox.resolve(cp);
-            sendBox.setIntArg(ARG_CHAR_REMAINING, 0);
-            return true;
+            return cp;
         } else {
             sendBox.setIntArg(ARG_CHAR_REMAINING, cp);
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -341,7 +331,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Boolean> consumeUtf8CodePointImpl = (SendBox<Boolean> sendBox) -> {
         if (!buffers.isReadable()) {
-            return false;
+            return UNRESOLVED;
         }
         int codePoint = sendBox.intArg(ARG_EXPECT);
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
@@ -352,16 +342,14 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         if (!CharUtils.isRemaining(cp)) {
             if (cp == codePoint) {
                 cleanMark();
-                sendBox.resolve(true);
+                return true;
             } else {
                 resetMark();
-                sendBox.resolve(false);
+                return false;
             }
-            sendBox.setIntArg(ARG_CHAR_REMAINING, 0);
-            return true;
         } else {
             sendBox.setIntArg(ARG_CHAR_REMAINING, cp);
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -396,7 +384,6 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             throw new IllegalStateException();
         }
         if (cp == cpTest) {
-            this.preventRelease = true;
             ++cpTestedIndex;
             int cpNum = sendBox.intArg(ARG_CP_UNTIL_NUM);
             int cpTestedLen = sendBox.intArg(ARG_CP_UNTIL_TESTED_LEN);
@@ -410,7 +397,6 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                 throw new IllegalStateException();
             }
         } else {
-            this.preventRelease = false;
             sendBox.setIntArg(ARG_CP_UNTIL_TESTED_INDEX, 0);
             sendBox.setIntArg(ARG_CP_UNTIL_TESTED_LEN, 0);
             return false;
@@ -419,7 +405,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     private final SendBoxHandler<Void> readUtf8UntilImpl = (SendBox<Void> sendBox) -> {
         if (!buffers.isReadable()) {
-            return false;
+            return UNRESOLVED;
         }
         ByteBuf output = sendBox.arg(ARG_BYTE_BUF_OUTPUT);
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
@@ -441,18 +427,17 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                         }
                         output.writerIndex(output.writerIndex() - cpTestedLen);
                     }
-                    sendBox.resolve(null);
-                    return true;
+                    return null;
                 } else {
                     buffers.readBuf(output, cpLen);
                 }
             } else {
                 int cpTestedLen = sendBox.intArg(ARG_CP_UNTIL_TESTED_LEN);
                 sendBox.setIntArg(ARG_CP_UNTIL_TESTED_LEN, cpTestedLen + cpLen);
-                return false;
+                return UNRESOLVED;
             }
         } while (buffers.isReadable());
-        return false;
+        return UNRESOLVED;
     };
 
     private void prepareUtf8Until(ByteBuf buf, int cpNum, UntilMode mode, int cp0, int cp1, int cp2) {
@@ -509,15 +494,13 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int readableBytes = buffers.readableBytes();
         if (readableBytes >= remaining) {
             buffers.readBytes(outputBytes, currentOffset, remaining);
-            sendBox.setIntArg(ARG_BYTES_REMAINING, 0);
-            sendBox.resolve(null);
-            return true;
+            return null;
         } else if (readableBytes > 0){
             buffers.readBytes(outputBytes, currentOffset, readableBytes);
             sendBox.setIntArg(ARG_BYTES_REMAINING, remaining - readableBytes);
-            return false;
+            return UNRESOLVED;
         } else {
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -541,7 +524,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     private final SendBoxHandler<Boolean> consumeBytesImpl = (SendBox<Boolean> sendBox) -> {
         int length = sendBox.intArg(ARG_BYTES_LENGTH);
         if (length == 0) {
-            sendBox.resolve(true);
+            return true;
         }
         int remaining = sendBox.intArg(ARG_BYTES_REMAINING);
         if (length == remaining) {
@@ -554,18 +537,16 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int toReads = Math.min(readableBytes, remaining);
         for (int i = currentOffset; i < currentOffset + toReads; ++i) {
             if (buffers.readByte() != expectedBytes[i]) {
-                sendBox.resolve(false);
                 resetMark();
-                return true;
+                return false;
             }
         }
         if (readableBytes >= remaining) {
-            sendBox.resolve(true);
             cleanMark();
             return true;
         } else {
             sendBox.setIntArg(ARG_BYTES_REMAINING, remaining - readableBytes);
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -592,14 +573,11 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int ignoreEmpty = sendBox.intArg(ARG_IGNORE_EMPTY);
         int toRead = Math.max(0, Math.min(maxLen, buffers.readableBytes()));
         if (toRead > 0) {
-            ByteBuf buf = buffers.readBuf(context.alloc(), toRead);
-            sendBox.resolve(buf);
-            return true;
+            return buffers.readBuf(context.alloc(), toRead);
         } else if (ignoreEmpty == 0) {
-            sendBox.resolve(Unpooled.EMPTY_BUFFER);
-            return true;
+            return Unpooled.EMPTY_BUFFER;
         } else {
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -643,8 +621,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                             default:
                                 throw new IllegalStateException("This is impossible.");
                         }
-                        sendBox.resolve(untilBox);
-                        return true;
+                        return untilBox;
                     }
                     if (until[index] == buffers.getByte()) {
                         matched[i]++;
@@ -667,8 +644,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             untilBox.setBuf(Unpooled.EMPTY_BUFFER);
         }
         untilBox.setSuccess(false);
-        sendBox.resolve(untilBox);
-        return true;
+        return untilBox;
     };
 
     @Override
@@ -684,13 +660,11 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int readableBytes = buffers.readableBytes();
         if (readableBytes >= remaining) {
             buffers.readerIndex(buffers.readerIndex() + (int) remaining);
-            sendBox.setLongArg(ARG_BYTES_REMAINING, 0);
-            sendBox.resolve(null);
-            return true;
+            return null;
         } else {
             buffers.readerIndex(buffers.readerIndex() + readableBytes);
             sendBox.setLongArg(ARG_BYTES_REMAINING, remaining - readableBytes);
-            return false;
+            return UNRESOLVED;
         }
     };
 
@@ -709,13 +683,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             ByteBuf buf = sendBox.arg(ARG_WRITE_BYTE_BUF);
             boolean flush = sendBox.intArg(ARG_WRITE_FLUSH) != 0;
             if (flush) {
-                sendBox.resolve(context.channel().writeAndFlush(buf));
+                return context.channel().writeAndFlush(buf);
             } else {
-                sendBox.resolve(context.channel().write(buf));
+                return context.channel().write(buf);
             }
-            return true;
         }
-        return false;
+        return UNRESOLVED;
     };
 
     @Override
@@ -870,7 +843,6 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                 Arrays.fill(this.longArgs, 0);
                 this.longArgUsed = 0;
             }
-            EasyNettyChannelHandler.this.preventRelease = false;
         }
 
         private void prepare(JThunk<E> thunk, JContext context) {
@@ -943,10 +915,6 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             return longArgs[index];
         }
 
-        public void resolve(E value) {
-            thunk.resolve(value, context);
-        }
-
         public void reject(Throwable t) {
             thunk.reject(t, context);
         }
@@ -966,18 +934,21 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             assert handler != null;
             prepare(thunk, context);
             try {
-                if (handler.handle(this)) {
+                Object resolved = handler.handle(this);
+                if (resolved != UNRESOLVED) {
                     prepareNextRead();
                     reset();
+                    thunk.resolve((E) resolved, context);
                 }
             } catch (Throwable t) {
-                thunk.reject(t, context);
+                prepareNextRead();
                 reset();
+                thunk.reject(t, context);
             }
         }
     }
 
     interface SendBoxHandler<E> {
-        boolean handle(SendBox<E> box);
+        Object handle(SendBox<E> box);
     }
 }

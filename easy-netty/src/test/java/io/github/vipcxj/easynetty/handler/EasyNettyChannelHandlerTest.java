@@ -18,7 +18,6 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -398,7 +397,6 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    @Disabled
     void testReadSomeBuf() throws InterruptedException {
         ByteBuf buf = createBigBuf();
         JPromiseTrigger<Object> completeTrigger = JPromise.createTrigger();
@@ -410,9 +408,7 @@ public class EasyNettyChannelHandlerTest {
                 ByteBuf b = context.readSomeBuf(remaining).await();
                 if (b.isReadable()) {
                     remaining -= b.readableBytes();
-                    System.out.println("write " + b.readableBytes() + " to the cache.");
                     cache.writeBytes(b);
-                    System.out.println("Current cache size is " + cache.writerIndex());
                 }
             }
             Assertions.assertEquals(buf.slice(0, size), cache);
@@ -478,7 +474,6 @@ public class EasyNettyChannelHandlerTest {
     }
 
     @Test
-    @Disabled
     void testReadSomeBufUntilAny() throws InterruptedException {
         ByteBuf buf = createBigBuf();
         byte[] delimiter1 = ("这是一个分隔符" + UUID.randomUUID()).getBytes(StandardCharsets.UTF_8);
