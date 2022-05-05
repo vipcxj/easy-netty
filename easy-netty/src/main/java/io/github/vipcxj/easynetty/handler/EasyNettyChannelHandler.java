@@ -125,6 +125,18 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         buffers.cleanMark();
     }
 
+    protected void mark0() {
+        buffers.mark0();
+    }
+
+    protected void resetMark0() {
+        buffers.resetMark0();
+    }
+
+    protected void cleanMark0() {
+        buffers.cleanMark0();
+    }
+
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         ByteBuf buf = (ByteBuf) msg;
@@ -338,15 +350,15 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int codePoint = sendBox.intArg(ARG_EXPECT);
         int charRemaining = sendBox.intArg(ARG_CHAR_REMAINING);
         if (charRemaining == 0) {
-            mark();
+            mark0();
         }
         int cp = CharUtils.readUtf8CodePoint(bsBuffers, charRemaining);
         if (!CharUtils.isRemaining(cp)) {
             if (cp == codePoint) {
-                cleanMark();
+                cleanMark0();
                 return true;
             } else {
-                resetMark();
+                resetMark0();
                 return false;
             }
         } else {
@@ -530,7 +542,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         }
         int remaining = sendBox.intArg(ARG_BYTES_REMAINING);
         if (length == remaining) {
-            mark();
+            mark0();
         }
         byte[] expectedBytes = sendBox.arg(ARG_BYTES_EXPECT);
         int offset = sendBox.intArg(ARG_BYTES_OFFSET);
@@ -539,12 +551,12 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         int toReads = Math.min(readableBytes, remaining);
         for (int i = currentOffset; i < currentOffset + toReads; ++i) {
             if (buffers.readByte() != expectedBytes[i]) {
-                resetMark();
+                resetMark0();
                 return false;
             }
         }
         if (readableBytes >= remaining) {
-            cleanMark();
+            cleanMark0();
             return true;
         } else {
             sendBox.setIntArg(ARG_BYTES_REMAINING, remaining - readableBytes);

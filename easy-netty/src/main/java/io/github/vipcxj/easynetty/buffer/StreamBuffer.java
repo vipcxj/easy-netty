@@ -10,6 +10,7 @@ public class StreamBuffer {
     private final UnsafeLinkedList<ByteBuf> buffers;
     private int readerIndex;
     private int writerIndex;
+    private int markIndex0;
     private int markIndex;
     private UnsafeLinkedList.Node<ByteBuf> currentNode;
     private int currentOffset;
@@ -18,6 +19,7 @@ public class StreamBuffer {
         this.buffers = new UnsafeLinkedList<>();
         this.readerIndex = 0;
         this.writerIndex = 0;
+        this.markIndex0 = -1;
         this.markIndex = -1;
         this.currentNode = null;
         this.currentOffset = -1;
@@ -137,18 +139,18 @@ public class StreamBuffer {
         markIndex = -1;
     }
 
-    public void resetMark() {
-        if (markIndex == -1) {
+    private void resetMark(int mark) {
+        if (mark == -1) {
             throw new IllegalStateException("The mark index is not set yet.");
         }
         UnsafeLinkedList.Node<ByteBuf> node = buffers.getHead();
         int offset = 0;
         while (node != null) {
             ByteBuf current = node.getData();
-            if (markIndex < offset + current.writerIndex()) {
-                readerIndex = markIndex;
+            if (mark < offset + current.writerIndex()) {
+                readerIndex = mark;
                 currentNode = node;
-                currentOffset = markIndex - offset;
+                currentOffset = mark - offset;
                 return;
             }
             offset += current.writerIndex();
@@ -157,10 +159,29 @@ public class StreamBuffer {
         throw new IllegalStateException("This is impossible.");
     }
 
+    public void resetMark() {
+        resetMark(markIndex);
+    }
+
+    public void mark0() {
+        markIndex0 = readerIndex;
+    }
+
+    public void cleanMark0() {
+        markIndex0 = -1;
+    }
+
+    public void resetMark0() {
+        resetMark(markIndex0);
+    }
+
     public void freeSomeBytes() {
         int target = readerIndex;
-        if (markIndex != -1 && markIndex < readerIndex) {
+        if (markIndex != -1 && markIndex < target) {
             target = markIndex;
+        }
+        if (markIndex0 != -1 && markIndex0 < target) {
+            target = markIndex0;
         }
         moveToValid();
         if (currentNode == null) {
@@ -183,6 +204,9 @@ public class StreamBuffer {
         writerIndex -= offset;
         if (markIndex != -1) {
             markIndex -= offset;
+        }
+        if (markIndex0 != -1) {
+            markIndex0 -= offset;
         }
     }
 
@@ -455,6 +479,7 @@ public class StreamBuffer {
         currentNode = null;
         currentOffset = -1;
         markIndex = -1;
+        markIndex0 = -1;
         readerIndex = writerIndex = 0;
     }
 }
