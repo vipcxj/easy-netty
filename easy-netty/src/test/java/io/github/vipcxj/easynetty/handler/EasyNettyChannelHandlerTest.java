@@ -396,6 +396,13 @@ public class EasyNettyChannelHandlerTest {
         return buf;
     }
 
+    private void sendBigBuf(AbstractSocketClient client, ByteBuf buf) {
+        for (int i = 0; i < 16; ++i) {
+            client.getChannel().writeAndFlush(buf.retainedSlice(i * M, M / 2));
+            client.getChannel().writeAndFlush(buf.retainedSlice(i * M + M / 2, M / 2));
+        }
+    }
+
     @Test
     void testReadSomeBuf() throws InterruptedException {
         ByteBuf buf = createBigBuf();
@@ -416,10 +423,7 @@ public class EasyNettyChannelHandlerTest {
             return JPromise.empty();
         });
         AbstractSocketClient client = createClient();
-        for (int i = 0; i < 16; ++i) {
-            client.getChannel().writeAndFlush(buf.retainedSlice(i * M, M / 2));
-            client.getChannel().writeAndFlush(buf.retainedSlice(i * M + M / 2, M / 2));
-        }
+        sendBigBuf(client, buf);
         completeTrigger.getPromise()
                 .doFinally(() -> client.close(true))
                 .doFinally(server::close).block();

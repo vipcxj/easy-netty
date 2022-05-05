@@ -12,6 +12,11 @@ public class BytesUtils {
         return (short) (memory[index] << 8 | memory[index + 1] & 0xFF);
     }
 
+    public static void setShort(byte[] memory, int index, int s) {
+        memory[index] = (byte) ((s >> 8) & 0xff);
+        memory[index + 1] = (byte) (s & 0xff);
+    }
+
     public static short getShortLE(byte[] memory, int index) {
         return (short) (memory[index] & 0xff | memory[index + 1] << 8);
     }
@@ -116,6 +121,17 @@ public class BytesUtils {
             }
         }
         return new String(memory, index, end - index, StandardCharsets.UTF_8);
+    }
+
+    public static void setString(byte[] memory, int index, int maxLen, String s) {
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length >= maxLen) {
+            throw new IllegalArgumentException("Too long string.");
+        }
+        System.arraycopy(bytes, 0, memory, index, bytes.length);
+        for (int i = bytes.length; i < maxLen; ++i) {
+            memory[index + i] = 0;
+        }
     }
 
     private BytesUtils() {}

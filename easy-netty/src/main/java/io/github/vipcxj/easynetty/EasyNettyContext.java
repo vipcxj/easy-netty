@@ -112,7 +112,7 @@ public interface EasyNettyContext {
     JPromise<ByteBuf> readSomeBuf(int maxLen, boolean ignoreEmpty);
 
     default JPromise<ByteBuf> readSomeBuf(int maxLen) {
-        return readSomeBuf(maxLen, false);
+        return readSomeBuf(maxLen, true);
     }
 
     JPromise<UntilBox> readSomeBufUntilAny(UntilBox untilBox);

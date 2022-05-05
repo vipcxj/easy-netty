@@ -1,5 +1,6 @@
 package io.github.vipcxj.easynetty.redis;
 
+import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.easynetty.handler.EasyNettyChannelHandler;
 import io.github.vipcxj.easynetty.EasyNettyHandler;
 import io.netty.buffer.ByteBuf;
@@ -17,7 +18,7 @@ public class AbstractRedisMessageTest {
         channel = new EmbeddedChannel();
     }
 
-    void prepare(EasyNettyHandler handler) throws Exception {
+    void prepare(EasyNettyHandler handler) {
         channel.pipeline().addLast(new EasyNettyChannelHandler(handler));
         // channel.register();
     }
@@ -27,5 +28,9 @@ public class AbstractRedisMessageTest {
         ByteBuf buf = channel.alloc().buffer(bytes.length);
         buf.writeBytes(bytes);
         channel.writeInbound(buf);
+    }
+
+    EasyNettyContext getContext() {
+        return channel.pipeline().get(EasyNettyChannelHandler.class);
     }
 }

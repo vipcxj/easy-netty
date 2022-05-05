@@ -2,11 +2,10 @@ package io.github.vipcxj.easynetty.redis;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
+import io.netty.buffer.ByteBuf;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.ListIterator;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 
 public class RedisArrayMessage extends AbstractRedisMessage {
 
@@ -26,6 +25,35 @@ public class RedisArrayMessage extends AbstractRedisMessage {
         this.messages = null;
     }
 
+    public RedisArrayMessage(List<RedisMessage> messages) {
+        super(null);
+        this.ready = true;
+        this.mode = StoreMode.STORE;
+        this.messages = messages;
+        if (messages == null) {
+            this.size = -1;
+            this.readIndex = 0;
+        } else {
+            if (!messages.stream().allMatch(RedisMessage::isComplete)) {
+                throw new IllegalArgumentException("All messages must be completed.");
+            }
+            if (messages.stream().anyMatch(msg -> {
+                if (msg.type() == RedisType.ARRAY) {
+                    return msg.asArray().getMode() != StoreMode.STORE;
+                } else if (msg.type() == RedisType.BULK_STRING) {
+                    return msg.asBulkString().getMode() != StoreMode.STORE;
+                } else {
+                    return false;
+                }
+            })) {
+                throw new IllegalArgumentException("The store mode of all array and bulk string messages must be STORE");
+            }
+            this.size = messages.size();
+            this.readIndex = messages.size();
+        }
+        markComplete();
+    }
+
     @Override
     public RedisType type() {
         return RedisType.ARRAY;
@@ -36,12 +64,23 @@ public class RedisArrayMessage extends AbstractRedisMessage {
         return this;
     }
 
-    private JPromise<Void> ready() {
+    public int getSize() {
+        if (!ready) {
+            throw new IllegalStateException("Call ready().await() first.");
+        }
+        return size;
+    }
+
+    public StoreMode getMode() {
+        return mode;
+    }
+
+    public JPromise<Void> ready() {
         if (!ready) {
             size = Math.toIntExact(Utils.readRedisNumber(context).await());
             ready = true;
             if (size >= 0) {
-                this.messages = new ArrayList<>(Math.min(size, 1024));
+                this.messages = new ArrayList<>(Math.min(size, 256));
             }
         }
         return JPromise.empty();
@@ -65,6 +104,9 @@ public class RedisArrayMessage extends AbstractRedisMessage {
     public JPromise<Iterator<JPromise<RedisMessage>>> messageIterator(boolean store) {
         ready().await();
         if (size < 0) {
+            this.mode = StoreMode.STORE;
+            this.messages = null;
+            markComplete();
             return JPromise.just(null);
         }
         if (mode == StoreMode.UNKNOWN) {
@@ -94,16 +136,103 @@ public class RedisArrayMessage extends AbstractRedisMessage {
                     throw new IllegalStateException("Last message is not completed.");
                 }
                 current = RedisMessages.readMessage(context).await();
+                RedisMessage message = current;
                 ++readIndex;
                 if (mode == StoreMode.STORE) {
                     messageIterator.add(current);
                 }
                 if (readIndex == size) {
+                    current.untilComplete().onSuccess((ctx) -> markComplete());
                     current = null;
-                    complete = true;
                 }
-                return JPromise.just(current);
+                return JPromise.just(message);
             }
         }
+    }
+
+    @Override
+    public JPromise<Void> complete(boolean skip) {
+        if (isComplete()) {
+            return JPromise.empty();
+        }
+        ready().await();
+        if (size < 0) {
+            this.mode = StoreMode.STORE;
+            this.messages = null;
+            markComplete();
+            return JPromise.empty();
+        }
+        if (skip || mode == StoreMode.DISCARD) {
+            for (int i = readIndex; i < size; ++i) {
+                RedisMessage message = RedisMessages.readMessage(context).await();
+                message.complete(skip).await();
+            }
+            this.mode = StoreMode.DISCARD;
+            markComplete();
+            return JPromise.empty();
+        } else {
+            Iterator<JPromise<RedisMessage>> iterator = messageIterator(true).await();
+            while (iterator.hasNext()) {
+                RedisMessage message = iterator.next().await();
+                message.complete(false).await();
+            }
+            return JPromise.empty();
+        }
+    }
+
+    @Override
+    public void writeToByteBuf(ByteBuf buf) {
+        makeSureCompleted();
+        if (mode != StoreMode.STORE) {
+            throw new UnsupportedOperationException("Only store mode bulk string message support write to byte buf.");
+        }
+        buf.writeByte(type().sign());
+        buf.writeCharSequence(Integer.toString(size), StandardCharsets.UTF_8);
+        Utils.writeRedisLineEnd(buf);
+        if (messages != null) {
+            for (RedisMessage message : messages) {
+                message.writeToByteBuf(buf);
+            }
+        }
+    }
+
+    private boolean equalsMessages(List<RedisMessage> messages) {
+        if (this.messages == null || messages == null) {
+            return this.messages == messages;
+        }
+        if (this.messages.size() != messages.size()) {
+            return false;
+        }
+        Iterator<RedisMessage> iter1 = this.messages.iterator();
+        Iterator<RedisMessage> iter2 = messages.iterator();
+        while (iter1.hasNext()) {
+            RedisMessage thisMessage = iter1.next();
+            RedisMessage otherMessage = iter2.next();
+            if (!Objects.equals(thisMessage, otherMessage)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        if (!super.equals(o)) return false;
+        RedisArrayMessage that = (RedisArrayMessage) o;
+        return ready == that.ready && size == that.size && readIndex == that.readIndex && equalsMessages(that.messages);
+    }
+
+    private int hashMessages() {
+        if (messages == null) {
+            return 0;
+        }
+        return Objects.hash(messages.toArray());
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), ready, size, readIndex, hashMessages());
     }
 }

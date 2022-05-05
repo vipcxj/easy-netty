@@ -84,7 +84,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     @Override
     public void channelInactive0(ChannelHandlerContext ctx) throws Exception {
-        promise.cancel();
+        if (promise != null) {
+            promise.cancel();
+        }
         if (readSendBox.isReady()) {
             readSendBox.cancel();
         }
@@ -679,6 +681,9 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     private static int ARG_WRITE_BYTE_BUF;
     private static int ARG_WRITE_FLUSH;
     private final SendBoxHandler<ChannelFuture> writeBufferImpl = (sendBox) -> {
+        if (!context.channel().isActive()) {
+            sendBox.cancel();
+        }
         if (context.channel().isWritable()) {
             ByteBuf buf = sendBox.arg(ARG_WRITE_BYTE_BUF);
             boolean flush = sendBox.intArg(ARG_WRITE_FLUSH) != 0;

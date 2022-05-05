@@ -38,23 +38,24 @@ public class RedisClusterMessage {
 
     // GOSSIP
     // char nodename[CLUSTER_NAMELEN]
-    private static final int OFFSET_GOSSIP_NODE_NAME = 2256;
+    private static final int OFFSET_GOSSIP_NODE_NAME = 0;
     // uint32_t ping_sent
-    private static final int OFFSET_GOSSIP_PING_SENT = 2296;
+    private static final int OFFSET_GOSSIP_PING_SENT = OFFSET_GOSSIP_NODE_NAME + CLUSTER_NAMELEN;
     // uint32_t pong_received
-    private static final int OFFSET_GOSSIP_PONG_RECEIVED = 2300;
+    private static final int OFFSET_GOSSIP_PONG_RECEIVED = OFFSET_GOSSIP_PING_SENT + 4;
     // char ip[NET_IP_STR_LEN]; /* IP address last time it was seen */
-    private static final int OFFSET_GOSSIP_IP = 2304;
+    private static final int OFFSET_GOSSIP_IP = OFFSET_GOSSIP_PONG_RECEIVED + 4;
     // uint16_t port; /* base port last time it was seen */
-    private static final int OFFSET_GOSSIP_PORT = 2344;
+    private static final int OFFSET_GOSSIP_PORT = OFFSET_GOSSIP_IP + NET_IP_STR_LEN;
     // uint16_t cport; /* cluster port last time it was seen */
-    private static final int OFFSET_GOSSIP_C_PORT = 2346;
+    private static final int OFFSET_GOSSIP_C_PORT = OFFSET_GOSSIP_PORT + 2;
     // uint16_t flags; /* node->flags copy */
-    private static final int OFFSET_GOSSIP_FLAGS = 2348;
+    private static final int OFFSET_GOSSIP_FLAGS = OFFSET_GOSSIP_C_PORT + 2;
     // uint16_t pport; /* plaintext-port when base port is TLS */
-    private static final int OFFSET_GOSSIP_P_PORT = 2350;
+    private static final int OFFSET_GOSSIP_P_PORT = OFFSET_GOSSIP_C_PORT + 2;
     // uint16_t notused1;
-    private static final int OFFSET_GOSSIP_NOT_USED1 = 2352;
+    private static final int OFFSET_GOSSIP_NOT_USED1 = OFFSET_GOSSIP_C_PORT + 2;
+    private static final int LEN_GOSSIP_DATA = OFFSET_GOSSIP_NOT_USED1 + 2;
 
     // fail
     // char nodename[CLUSTER_NAMELEN];
@@ -108,6 +109,10 @@ public class RedisClusterMessage {
         this.context = context;
     }
 
+    public static JPromise<Boolean> isClusterBusMessage(EasyNettyContext context) {
+        return context.consumeBytes(SIG);
+    }
+
     public JPromise<Void> readHeader() {
         if (header == null) {
             header = context.readBytes(OFFSET_DATA).await();
@@ -153,6 +158,12 @@ public class RedisClusterMessage {
         }
     }
 
+    private void assetBodyReady() {
+        if (data == null) {
+            throw new IllegalStateException("Call `readBody().await()` at first.");
+        }
+    }
+
     public boolean isComplete() {
         return complete;
     }
@@ -160,49 +171,49 @@ public class RedisClusterMessage {
     public long getTotalLen() {
         assetHeaderReady();
         // uint32_t totlen;    /* Total length of this message */
-        return BytesUtils.getUnsignedIntLE(header, OFFSET_TOT_LEN);
+        return BytesUtils.getUnsignedInt(header, OFFSET_TOT_LEN);
     }
 
     public int getProtocolVersion() {
         assetHeaderReady();
         // uint16_t ver;       /* Protocol version, currently set to 1. */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_VER);
+        return BytesUtils.getUnsignedShort(header, OFFSET_VER);
     }
 
     public int getPort() {
         assetHeaderReady();
         // uint16_t port;      /* TCP base port number. */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_PORT);
+        return BytesUtils.getUnsignedShort(header, OFFSET_PORT);
     }
 
     public int getType() {
         assetHeaderReady();
         // uint16_t type;      /* Message type */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_TYPE);
+        return BytesUtils.getUnsignedShort(header, OFFSET_TYPE);
     }
 
     public int getCount() {
         assetHeaderReady();
         // uint16_t count;     /* Only used for some kind of messages. */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_COUNT);
+        return BytesUtils.getUnsignedShort(header, OFFSET_COUNT);
     }
 
     public long getCurrentEpoch() {
         assetHeaderReady();
         // uint64_t currentEpoch;  /* The epoch accordingly to the sending node. */
-        return BytesUtils.getLongLE(header, OFFSET_CURRENT_EPOCH);
+        return BytesUtils.getLong(header, OFFSET_CURRENT_EPOCH);
     }
 
     public long getConfigEpoch() {
         assetHeaderReady();
         // uint64_t configEpoch;
-        return BytesUtils.getLongLE(header, OFFSET_CONFIG_EPOCH);
+        return BytesUtils.getLong(header, OFFSET_CONFIG_EPOCH);
     }
 
     public long getOffset() {
         assetHeaderReady();
         // uint64_t offset;
-        return BytesUtils.getLongLE(header, OFFSET_OFFSET);
+        return BytesUtils.getLong(header, OFFSET_OFFSET);
     }
 
     public String getSender() {
@@ -226,32 +237,91 @@ public class RedisClusterMessage {
     public int getExtensions() {
         assetHeaderReady();
         // uint16_t extensions; /* Number of extensions sent along with this packet. */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_EXTENSIONS);
+        return BytesUtils.getUnsignedShort(header, OFFSET_EXTENSIONS);
     }
 
     public int getPlainTextPort() {
         assetHeaderReady();
         // uint16_t pport;      /* Sender TCP plaintext port, if base port is TLS */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_P_PORT);
+        return BytesUtils.getUnsignedShort(header, OFFSET_P_PORT);
     }
 
     public int getClusterBusPort() {
         assetHeaderReady();
         // uint16_t cport;      /* Sender TCP cluster bus port */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_C_PORT);
+        return BytesUtils.getUnsignedShort(header, OFFSET_C_PORT);
     }
 
     public int getFlags() {
         assetHeaderReady();
         // uint16_t flags;      /* Sender node flags */
-        return BytesUtils.getUnsignedShortLE(header, OFFSET_FLAGS);
+        return BytesUtils.getUnsignedShort(header, OFFSET_FLAGS);
     }
 
     public int getStateAndMFlags() {
         assetHeaderReady();
         // unsigned char state; /* Cluster state from the POV of the sender */
         // unsigned char mflags[3]; /* Message flags: CLUSTERMSG_FLAG[012]_... */
-        return BytesUtils.getIntLE(header, OFFSET_STATE);
+        return BytesUtils.getInt(header, OFFSET_STATE);
+    }
+
+    public String getNthNode(int i) {
+        assetBodyReady();
+        return BytesUtils.getString(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_NODE_NAME, CLUSTER_NAMELEN);
+    }
+
+    public void setNthNode(int i, String node) {
+        BytesUtils.setString(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_NODE_NAME, CLUSTER_NAMELEN, node);
+    }
+
+    public String getNthIp(int i) {
+        assetBodyReady();
+        return BytesUtils.getString(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_IP, CLUSTER_NAMELEN);
+    }
+
+    public void setNthIp(int i, String ip) {
+        assetBodyReady();
+        BytesUtils.setString(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_IP, CLUSTER_NAMELEN, ip);
+    }
+
+    public int getNthPort(int i) {
+        assetBodyReady();
+        return BytesUtils.getShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_PORT);
+    }
+
+    public void setNthPort(int i, int port) {
+        assetBodyReady();
+        BytesUtils.setShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_PORT, port);
+    }
+
+    public int getNthPlainTextPort(int i) {
+        assetBodyReady();
+        return BytesUtils.getShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_P_PORT);
+    }
+
+    public void setNthPlainTextPort(int i, int port) {
+        assetBodyReady();
+        BytesUtils.setShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_P_PORT, port);
+    }
+
+    public int getNthClusterPort(int i) {
+        assetBodyReady();
+        return BytesUtils.getShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_C_PORT);
+    }
+
+    public void setNthClusterPort(int i, int port) {
+        assetBodyReady();
+        BytesUtils.setShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_C_PORT, port);
+    }
+
+    public short getNthFlags(int i) {
+        assetBodyReady();
+        return BytesUtils.getShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_FLAGS);
+    }
+
+    public void setNthFlags(int i, short flags) {
+        assetBodyReady();
+        BytesUtils.setShort(data, LEN_GOSSIP_DATA * i + OFFSET_GOSSIP_FLAGS, flags);
     }
 
     public enum DateType {
