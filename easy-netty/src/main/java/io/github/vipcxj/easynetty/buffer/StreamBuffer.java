@@ -11,7 +11,7 @@ public class StreamBuffer {
     private int readerIndex;
     private int writerIndex;
     private int markIndex0;
-    private int markIndex;
+    private final Marks marks;
     private UnsafeLinkedList.Node<ByteBuf> currentNode;
     private int currentOffset;
 
@@ -20,7 +20,7 @@ public class StreamBuffer {
         this.readerIndex = 0;
         this.writerIndex = 0;
         this.markIndex0 = -1;
-        this.markIndex = -1;
+        this.marks = new Marks(8);
         this.currentNode = null;
         this.currentOffset = -1;
     }
@@ -132,11 +132,11 @@ public class StreamBuffer {
     }
 
     public void mark() {
-        markIndex = readerIndex;
+        marks.push(readerIndex);
     }
 
     public void cleanMark() {
-        markIndex = -1;
+        marks.pop();
     }
 
     private void resetMark(int mark) {
@@ -160,7 +160,7 @@ public class StreamBuffer {
     }
 
     public void resetMark() {
-        resetMark(markIndex);
+        resetMark(marks.top());
     }
 
     public void mark0() {
@@ -177,17 +177,14 @@ public class StreamBuffer {
 
     public void freeSomeBytes() {
         int target = readerIndex;
-        if (markIndex != -1 && markIndex < target) {
-            target = markIndex;
+        int minMark = marks.min();
+        if (minMark != -1 && minMark < target) {
+            target = minMark;
         }
         if (markIndex0 != -1 && markIndex0 < target) {
             target = markIndex0;
         }
         moveToValid();
-        if (currentNode == null) {
-            release();
-            return;
-        }
         UnsafeLinkedList.Node<ByteBuf> node = buffers.getHead();
         int offset = 0;
         while (node != null) {
@@ -202,9 +199,7 @@ public class StreamBuffer {
         }
         readerIndex -= offset;
         writerIndex -= offset;
-        if (markIndex != -1) {
-            markIndex -= offset;
-        }
+        marks.down(offset);
         if (markIndex0 != -1) {
             markIndex0 -= offset;
         }
@@ -478,7 +473,7 @@ public class StreamBuffer {
         buffers.clear();
         currentNode = null;
         currentOffset = -1;
-        markIndex = -1;
+        marks.clean();
         markIndex0 = -1;
         readerIndex = writerIndex = 0;
     }
