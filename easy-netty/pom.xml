@@ -3,7 +3,7 @@
     <parent>
         <artifactId>easy-netty-parent</artifactId>
         <groupId>io.github.vipcxj</groupId>
-        <version>0.0.11-SNAPSHOT</version>
+        <version>0.0.11</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -23,7 +23,7 @@
         <url>https://github.com/vipcxj/easy-netty</url>
         <connection>scm:git:git://github.com/vipcxj/easy-netty.git</connection>
         <developerConnection>scm:git:https://github.com/vipcxj/easy-netty.git</developerConnection>
-        <tag>HEAD</tag>
+        <tag>easy-netty-parent-0.0.11</tag>
     </scm>
     <developers>
         <developer>
