@@ -1,6 +1,7 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
+import io.github.vipcxj.easynetty.redis.Utils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -123,6 +124,20 @@ public class RedisBulkStringMessage extends AbstractRedisMessage {
         }
     }
 
+    public ByteBuf readCachedContent() {
+        if (length == -2) {
+            throw new UnsupportedOperationException("Call readLength().await() first.");
+        }
+        if (length == -1) {
+            return null;
+        }
+        if (content == null || remaining == length) {
+            return Unpooled.EMPTY_BUFFER;
+        } else {
+            return Unpooled.wrappedBuffer(content, 0, length - remaining);
+        }
+    }
+
     public JPromise<ByteBuf> readSomeContent(boolean store) {
         if (isComplete()) {
             return JPromise.just(Unpooled.EMPTY_BUFFER);
@@ -162,12 +177,33 @@ public class RedisBulkStringMessage extends AbstractRedisMessage {
     public JPromise<Void> complete(boolean skip) {
         if (skip) {
             while (!isComplete()) {
-                readStringContent().await();
+                readSomeContent(false).await();
             }
         } else {
             readContent().await();
         }
         return JPromise.empty();
+    }
+
+    @Override
+    public JPromise<Void> write(EasyNettyContext outputContext, boolean readIfNeed, boolean storeIfRead) {
+        if (!readIfNeed) {
+            makeSureCompleted();
+        }
+        outputContext.writeByte(type().sign()).await();
+        readLength().await();
+        outputContext.writeString(Integer.toString(length)).await();
+        outputContext.writeBytes(Utils.REDIS_LINE_END).await();
+        if (length > 0) {
+            if (remaining < length) {
+                outputContext.writeBytes(content, 0, length - remaining).await();
+            }
+            while (!isComplete()) {
+                ByteBuf buf = readSomeContent(storeIfRead).await();
+                outputContext.writeBuffer(buf).await();
+            }
+        }
+        return outputContext.writeBytes(Utils.REDIS_LINE_END);
     }
 
     @Override

@@ -1,21 +1,22 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
+import io.github.vipcxj.easynetty.redis.Utils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.netty.buffer.ByteBuf;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
-public class RedisSimpleStringMessage extends AbstractRedisMessage {
+public class RedisErrorMessage extends AbstractRedisMessage {
 
     private String content;
 
-    public RedisSimpleStringMessage(EasyNettyContext context) {
+    public RedisErrorMessage(EasyNettyContext context) {
         super(context);
     }
 
-    public RedisSimpleStringMessage(String content) {
+    public RedisErrorMessage(String content) {
         super(null);
         this.content = content;
         markComplete();
@@ -23,11 +24,11 @@ public class RedisSimpleStringMessage extends AbstractRedisMessage {
 
     @Override
     public RedisType type() {
-        return RedisType.SIMPLE_STRING;
+        return RedisType.ERROR;
     }
 
     @Override
-    public RedisSimpleStringMessage asSimpleString() {
+    public RedisErrorMessage asError() {
         return this;
     }
 
@@ -58,11 +59,24 @@ public class RedisSimpleStringMessage extends AbstractRedisMessage {
     }
 
     @Override
+    public JPromise<Void> write(EasyNettyContext outputContext, boolean readIfNeed, boolean storeIfRead) {
+        if (!readIfNeed) {
+            makeSureCompleted();
+        }
+        if (!isComplete()) {
+            complete(false).await();
+        }
+        outputContext.writeByte(type().sign()).await();
+        outputContext.writeString(content).await();
+        return outputContext.writeBytes(Utils.REDIS_LINE_END);
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         if (!super.equals(o)) return false;
-        RedisSimpleStringMessage that = (RedisSimpleStringMessage) o;
+        RedisErrorMessage that = (RedisErrorMessage) o;
         return Objects.equals(content, that.content);
     }
 

@@ -604,6 +604,28 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         return createPromise(sendBox);
     }
 
+    private UntilBox matchUntil(UntilBox untilBox, byte[] until, int index, int start) {
+        untilBox.setMatchedUntil(index);
+        untilBox.setSuccess(true);
+        int end = buffers.readerIndex();
+        buffers.readerIndex(start);
+        switch (untilBox.getMode()) {
+            case SKIP:
+                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
+                buffers.readerIndex(end);
+                break;
+            case INCLUDE:
+                untilBox.setBuf(buffers.readBuf(context.alloc(), end - start));
+                break;
+            case EXCLUDE:
+                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
+                break;
+            default:
+                throw new IllegalStateException("This is impossible.");
+        }
+        return untilBox;
+    }
+
     private int ARG_UNTIL_BOX;
     private final SendBoxHandler<UntilBox> readSomeBufUntilAnyImpl = (sendBox) -> {
         UntilBox untilBox = sendBox.arg(ARG_UNTIL_BOX);
@@ -617,25 +639,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                     byte[] until = untils[i];
                     int index = matched[i];
                     if (index == until.length) {
-                        untilBox.setMatchedUntil(i);
-                        untilBox.setSuccess(true);
-                        int end = buffers.readerIndex();
-                        buffers.readerIndex(start);
-                        switch (untilBox.getMode()) {
-                            case SKIP:
-                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
-                                buffers.readerIndex(end);
-                                break;
-                            case INCLUDE:
-                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - start));
-                                break;
-                            case EXCLUDE:
-                                untilBox.setBuf(buffers.readBuf(context.alloc(), end - until.length - start));
-                                break;
-                            default:
-                                throw new IllegalStateException("This is impossible.");
-                        }
-                        return untilBox;
+                        return matchUntil(untilBox, until, i, start);
                     }
                     if (until[index] == buffers.getByte()) {
                         matched[i]++;
@@ -645,6 +649,13 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                 }
                 buffers.readByte();
             } while (buffers.isReadable());
+            for (int i = 0; i < untils.length; ++i) {
+                byte[] until = untils[i];
+                int index = matched[i];
+                if (index == until.length) {
+                    return matchUntil(untilBox, until, i, start);
+                }
+            }
             int len = 0;
             for (int i = 0; i < matched.length; ++i) {
                 int m = matched[i];
@@ -738,15 +749,23 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         return writeBufferAndFlush(buf);
     }
 
+    private void checkBytesRange(byte[] bytes, int offset, int length) {
+        if (offset < 0 || offset + length > bytes.length || length < 0) {
+            throw new IndexOutOfBoundsException("bytes length: " + bytes.length + ", offset: " + offset + ", length: " + length + ".");
+        }
+    }
+
     @Override
-    public JPromise<Void> writeBytes(byte[] bytes) {
-        ByteBuf buf = context.alloc().buffer(bytes.length).writeBytes(bytes);
+    public JPromise<Void> writeBytes(byte[] bytes, int offset, int length) {
+        checkBytesRange(bytes, offset, length);
+        ByteBuf buf = context.alloc().buffer(length).writeBytes(bytes, offset, length);
         return writeBuffer(buf);
     }
 
     @Override
-    public JPromise<Void> writeBytesAndFlush(byte[] bytes) {
-        ByteBuf buf = context.alloc().buffer(bytes.length).writeBytes(bytes);
+    public JPromise<Void> writeBytesAndFlush(byte[] bytes, int offset, int length) {
+        checkBytesRange(bytes, offset, length);
+        ByteBuf buf = context.alloc().buffer(length).writeBytes(bytes, offset, length);
         return writeBufferAndFlush(buf);
     }
 
@@ -869,7 +888,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
         public void install(SendBoxHandler<E> handler) {
             if (this.handler != null) {
-                throw new IllegalStateException();
+                throw new IllegalStateException("Unable to install " + handlerName(handler) + ", The handler " + handlerName(this.handler) + " has been installed.");
             }
             this.handler = handler;
         }
@@ -967,5 +986,45 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
     interface SendBoxHandler<E> {
         Object handle(SendBox<E> box);
+    }
+
+    private String handlerName(SendBoxHandler<?> handler) {
+        if (handler == consumeByteImpl) {
+            return "consumeByteImpl";
+        } else if (handler == consumeBytesImpl) {
+            return "consumeBytesImpl";
+        } else if (handler == consumeIntImpl) {
+            return "consumeIntImpl";
+        } else if (handler == consumeLongImpl) {
+            return "consumeLongImpl";
+        } else if (handler == consumeShortImpl) {
+            return "consumeShortImpl";
+        } else if (handler == consumeUtf8CodePointImpl) {
+            return "consumeUtf8CodePointImpl";
+        } else if (handler == readByteImpl) {
+            return "readByteImpl";
+        } else if (handler == readBytesImpl) {
+            return "readBytesImpl";
+        } else if (handler == readIntImpl) {
+            return "readIntImpl";
+        } else if (handler == readLongImpl) {
+            return "readLongImpl";
+        } else if (handler == readShortImpl) {
+            return "readShortImpl";
+        } else if (handler == readSomeBufImpl) {
+            return "readSomeBufImpl";
+        } else if (handler == readSomeBufUntilAnyImpl) {
+            return "readSomeBufUntilAnyImpl";
+        } else if (handler == readUtf8CodePointImpl) {
+            return "readUtf8CodePointImpl";
+        } else if (handler == readUtf8UntilImpl) {
+            return "readUtf8UntilImpl";
+        } else if (handler == skipImpl) {
+            return "skipImpl";
+        } else if (handler == writeBufferImpl) {
+            return "writeBufferImpl";
+        } else {
+            return "unknown";
+        }
     }
 }

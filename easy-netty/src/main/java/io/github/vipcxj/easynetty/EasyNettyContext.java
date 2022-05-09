@@ -125,9 +125,17 @@ public interface EasyNettyContext {
 
     JPromise<Void> writeByteAndFlush(int b);
 
-    JPromise<Void> writeBytes(byte[] bytes);
+    JPromise<Void> writeBytes(byte[] bytes, int offset, int length);
 
-    JPromise<Void> writeBytesAndFlush(byte[] bytes);
+    default JPromise<Void> writeBytes(byte[] bytes) {
+        return writeBytes(bytes, 0, bytes.length);
+    }
+
+    JPromise<Void> writeBytesAndFlush(byte[] bytes, int offset, int length);
+
+    default JPromise<Void> writeBytesAndFlush(byte[] bytes) {
+        return writeBytesAndFlush(bytes, 0, bytes.length);
+    }
 
     JPromise<Void> writeShort(int s);
 

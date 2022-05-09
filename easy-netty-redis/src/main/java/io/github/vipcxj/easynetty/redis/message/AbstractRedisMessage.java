@@ -1,4 +1,4 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
@@ -16,7 +16,6 @@ public abstract class AbstractRedisMessage implements RedisMessage {
         this.context = context;
         this.complete = false;
         this.completeTrigger = JPromise.createTrigger();
-        this.completeTrigger.start();
     }
 
     @Override

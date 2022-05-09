@@ -1,6 +1,7 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
+import io.github.vipcxj.easynetty.redis.Utils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.netty.buffer.ByteBuf;
 
@@ -52,6 +53,14 @@ public class RedisArrayMessage extends AbstractRedisMessage {
             this.readIndex = messages.size();
         }
         markComplete();
+    }
+
+    public List<RedisMessage> getMessages() {
+        makeSureCompleted();
+        if (mode != StoreMode.STORE) {
+            throw new UnsupportedOperationException("Only STORE mode support the method getMessages.");
+        }
+        return messages;
     }
 
     @Override
@@ -142,7 +151,7 @@ public class RedisArrayMessage extends AbstractRedisMessage {
                     messageIterator.add(current);
                 }
                 if (readIndex == size) {
-                    current.untilComplete().onSuccess((ctx) -> markComplete());
+                    current.untilComplete().onSuccess((ctx) -> markComplete()).async();
                     current = null;
                 }
                 return JPromise.just(message);
@@ -169,15 +178,14 @@ public class RedisArrayMessage extends AbstractRedisMessage {
             }
             this.mode = StoreMode.DISCARD;
             markComplete();
-            return JPromise.empty();
         } else {
             Iterator<JPromise<RedisMessage>> iterator = messageIterator(true).await();
             while (iterator.hasNext()) {
                 RedisMessage message = iterator.next().await();
                 message.complete(false).await();
             }
-            return JPromise.empty();
         }
+        return JPromise.empty();
     }
 
     @Override
@@ -213,6 +221,25 @@ public class RedisArrayMessage extends AbstractRedisMessage {
             }
         }
         return true;
+    }
+
+    @Override
+    public JPromise<Void> write(EasyNettyContext outputContext, boolean readIfNeed, boolean storeIfRead) {
+        if (!readIfNeed) {
+            makeSureCompleted();
+        }
+        outputContext.writeByte(type().sign()).await();
+        ready().await();
+        outputContext.writeString(Integer.toString(size)).await();
+        outputContext.writeBytes(Utils.REDIS_LINE_END).await();
+        Iterator<JPromise<RedisMessage>> iterator = messageIterator(storeIfRead).await();
+        if (iterator != null) {
+            while (iterator.hasNext()) {
+                RedisMessage message = iterator.next().await();
+                message.write(outputContext, readIfNeed, storeIfRead).await();
+            }
+        }
+        return JPromise.empty();
     }
 
     @Override

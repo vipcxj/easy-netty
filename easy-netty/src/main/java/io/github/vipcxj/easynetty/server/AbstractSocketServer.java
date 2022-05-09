@@ -22,7 +22,7 @@ public abstract class AbstractSocketServer implements Server {
     protected final EventLoopGroup workerGroup;
     protected final boolean ownWorkerGroup;
     protected Channel channel;
-    private JPromiseTrigger<Void> readyTrigger;
+    private final JPromiseTrigger<Void> readyTrigger;
 
     protected AbstractSocketServer(int port, EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
         this.port = port;
@@ -31,7 +31,6 @@ public abstract class AbstractSocketServer implements Server {
         this.workerGroup = workerGroup;
         this.ownWorkerGroup = false;
         this.readyTrigger = JPromise.createTrigger();
-        this.readyTrigger.start();
     }
 
     protected AbstractSocketServer(int port) {
@@ -41,7 +40,6 @@ public abstract class AbstractSocketServer implements Server {
         this.workerGroup = PlatformIndependent.createEventLoopGroup();
         this.ownWorkerGroup = true;
         this.readyTrigger = JPromise.createTrigger();
-        this.readyTrigger.start();
     }
 
     private Class<? extends ServerSocketChannel> getServerSocketChannelClass() {

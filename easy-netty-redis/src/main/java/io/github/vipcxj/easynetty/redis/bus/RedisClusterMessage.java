@@ -172,6 +172,16 @@ public class RedisClusterMessage {
         return dateType;
     }
 
+    public byte[] getHeader() {
+        assetHeaderReady();
+        return header;
+    }
+
+    public byte[] getData() {
+        assetBodyReady();
+        return data;
+    }
+
     public long getTotalLen() {
         assetHeaderReady();
         // uint32_t totlen;    /* Total length of this message */

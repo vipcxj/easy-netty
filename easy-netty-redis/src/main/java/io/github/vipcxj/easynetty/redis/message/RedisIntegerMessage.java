@@ -1,6 +1,7 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
+import io.github.vipcxj.easynetty.redis.Utils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 import io.netty.buffer.ByteBuf;
 
@@ -55,6 +56,17 @@ public class RedisIntegerMessage extends AbstractRedisMessage {
         buf.writeByte(type().sign());
         buf.writeCharSequence(Long.toString(value), StandardCharsets.UTF_8);
         Utils.writeRedisLineEnd(buf);
+    }
+
+    @Override
+    public JPromise<Void> write(EasyNettyContext outputContext, boolean readIfNeed, boolean storeIfRead) {
+        if (!readIfNeed) {
+            makeSureCompleted();
+        }
+        complete(false).await();
+        outputContext.writeByte(type().sign()).await();
+        outputContext.writeString(Long.toString(value)).await();
+        return outputContext.writeBytes(Utils.REDIS_LINE_END);
     }
 
     @Override

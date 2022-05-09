@@ -1,4 +1,4 @@
-package io.github.vipcxj.easynetty.redis;
+package io.github.vipcxj.easynetty.redis.message;
 
 import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
@@ -14,6 +14,7 @@ public interface RedisMessage {
     }
     JPromise<Void> untilComplete();
     void writeToByteBuf(ByteBuf buf);
+    JPromise<Void> write(EasyNettyContext outputContext, boolean readIfNeed, boolean storeIfRead);
     default RedisSimpleStringMessage asSimpleString() {
         throw new UnsupportedOperationException("Unable to transform to simple string message. The message type is " + type() + ".");
     }
@@ -28,5 +29,8 @@ public interface RedisMessage {
     }
     default RedisArrayMessage asArray() {
         throw new UnsupportedOperationException("Unable to transform to array message. The message type is " + type() + ".");
+    }
+    default RedisInlineMessage asInline() {
+        throw new UnsupportedOperationException("Unable to transform to inline message. The message type is " + type() + ".");
     }
 }
