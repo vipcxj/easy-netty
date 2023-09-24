@@ -502,6 +502,21 @@ public class EasyNettyChannelHandlerTest {
         completeTrigger.getPromise().doFinally(() -> client.close(true)).doFinally(server::close).block();
     }
 
+    @Test
+    void testWriteTooManyParts() {
+        channel.pipeline().addLast(new EasyNettyChannelHandler(context -> {
+            for (int i = 0; i < 10000; ++i) {
+                context.writeString(Integer.toString(i)).await();
+            }
+            return context.flush();
+        }));
+        channel.writeInbound(Unpooled.EMPTY_BUFFER);
+        for (int i = 0; i < 10000; ++i) {
+            ByteBuf buf = channel.readOutbound();
+            Assertions.assertEquals(Integer.toString(i), buf.toString(StandardCharsets.UTF_8));
+        }
+    }
+
     private AbstractEasyNettyServer setupServer(EasyNettyHandler handler) throws InterruptedException {
         AbstractEasyNettyServer server = new AbstractEasyNettyServer(11000) {
 

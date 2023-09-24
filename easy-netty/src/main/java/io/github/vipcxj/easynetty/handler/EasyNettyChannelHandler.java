@@ -77,7 +77,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     @Override
     public void channelActive0(ChannelHandlerContext ctx) throws Exception {
         promise = this.enHandler.handle(this).onError(ctx::fireExceptionCaught);
-        promise.async(JContext.create(scheduler));
+        promise.async(JContext.create(scheduler, true));
         maybeReadMore();
         super.channelActive0(ctx);
     }
@@ -108,7 +108,14 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
         if (writeSendBox.isReady() && ctx.channel().isWritable()) {
-            writeSendBox.handle();
+            // ctx.write trigger channelWritabilityChanged to unwritable before return.
+            // Then ctx.flush() trigger channelWritabilityChanged to writable back. Here writeSendBox still not return.
+            // So we use handling to prevent call handle() twice.
+            if (!writeSendBox.isHandling()) {
+                writeSendBox.handle();
+            }
+        } else if (ctx.channel().isActive()) {
+            ctx.flush();
         }
         super.channelWritabilityChanged(ctx);
     }
@@ -820,8 +827,11 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
         private int intArgUsed;
         private long[] longArgs;
         private int longArgUsed;
+        private boolean handling;
 
-        SendBox() {}
+        SendBox() {
+            this.handling = false;
+        }
 
         public SendBox<E> withObjectArgs(int argLen) {
             this.args = new Object[argLen];
@@ -855,6 +865,10 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
         public boolean isReady() {
             return this.thunk != null && this.context != null;
+        }
+
+        public boolean isHandling() {
+            return handling;
         }
 
         private void reset() {
@@ -957,7 +971,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
 
         public void cancel() {
             if (thunk != null) {
-                thunk.cancel();
+                thunk.interrupt(context);
             }
         }
 
@@ -970,6 +984,7 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
             assert handler != null;
             prepare(thunk, context);
             try {
+                handling = true;
                 Object resolved = handler.handle(this);
                 if (resolved != UNRESOLVED) {
                     prepareNextRead();
@@ -980,6 +995,8 @@ public class EasyNettyChannelHandler extends FixLifecycleChannelInboundHandlerAd
                 prepareNextRead();
                 reset();
                 thunk.reject(t, context);
+            } finally {
+                handling = false;
             }
         }
     }

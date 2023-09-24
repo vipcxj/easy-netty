@@ -14,7 +14,7 @@ public class PromiseUtils {
                     //noinspection unchecked
                     thunk.resolve((T) f.getNow(), context);
                 } else if (f.isCancelled()) {
-                    thunk.cancel();
+                    thunk.interrupt(context);
                 } else {
                     thunk.reject(f.cause(), context);
                 }

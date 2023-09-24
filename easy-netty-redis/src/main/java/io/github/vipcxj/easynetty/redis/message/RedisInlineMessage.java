@@ -53,6 +53,10 @@ public class RedisInlineMessage extends AbstractRedisMessage {
         return JPromise.empty();
     }
 
+    public String getContent() {
+        return content;
+    }
+
     public String getName() {
         markComplete();
         int pos = content.indexOf(' ');

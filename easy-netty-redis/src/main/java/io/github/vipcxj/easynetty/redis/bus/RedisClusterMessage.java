@@ -4,8 +4,11 @@ import io.github.vipcxj.easynetty.EasyNettyContext;
 import io.github.vipcxj.easynetty.utils.BytesUtils;
 import io.github.vipcxj.jasync.ng.spec.JPromise;
 
+import java.util.Objects;
+
 @SuppressWarnings("unused")
 public class RedisClusterMessage {
+    private static final byte[] EMPTY = new byte[0];
     private static final byte[] SIG = new byte[] {'R', 'C', 'm', 'b'};
     private static final int CLUSTER_SLOTS = 16384;
     private static final int CLUSTER_NAMELEN = 40;
@@ -52,9 +55,9 @@ public class RedisClusterMessage {
     // uint16_t flags; /* node->flags copy */
     private static final int OFFSET_GOSSIP_FLAGS = OFFSET_GOSSIP_C_PORT + 2;
     // uint16_t pport; /* plaintext-port when base port is TLS */
-    private static final int OFFSET_GOSSIP_P_PORT = OFFSET_GOSSIP_C_PORT + 2;
+    private static final int OFFSET_GOSSIP_P_PORT = OFFSET_GOSSIP_FLAGS + 2;
     // uint16_t notused1;
-    private static final int OFFSET_GOSSIP_NOT_USED1 = OFFSET_GOSSIP_C_PORT + 2;
+    private static final int OFFSET_GOSSIP_NOT_USED1 = OFFSET_GOSSIP_P_PORT + 2;
     private static final int LEN_GOSSIP_DATA = OFFSET_GOSSIP_NOT_USED1 + 2;
 
     // fail
@@ -87,17 +90,17 @@ public class RedisClusterMessage {
     // unsigned char bulk_data[3]; /* 3 bytes just as placeholder */
     private static final int OFFSET_MODULE_BULK_DATA = 2269;
 
-    private static final int CLUSTERMSG_TYPE_PING = 0;          /* Ping */
-    private static final int CLUSTERMSG_TYPE_PONG = 1;          /* Pong (reply to Ping) */
-    private static final int CLUSTERMSG_TYPE_MEET = 2;          /* Meet "let's join" message */
-    private static final int CLUSTERMSG_TYPE_FAIL = 3;          /* Mark node xxx as failing */
-    private static final int CLUSTERMSG_TYPE_PUBLISH = 4;       /* Pub/Sub Publish propagation */
-    private static final int CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST = 5; /* May I failover? */
-    private static final int CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK = 6;     /* Yes, you have my vote */
-    private static final int CLUSTERMSG_TYPE_UPDATE = 7;        /* Another node slots configuration */
-    private static final int CLUSTERMSG_TYPE_MFSTART = 8;       /* Pause clients for manual failover */
-    private static final int CLUSTERMSG_TYPE_MODULE = 9;        /* Module cluster API message. */
-    private static final int CLUSTERMSG_TYPE_PUBLISHSHARD = 10; /* Pub/Sub Publish shard propagation */
+    public static final int CLUSTERMSG_TYPE_PING = 0;          /* Ping */
+    public static final int CLUSTERMSG_TYPE_PONG = 1;          /* Pong (reply to Ping) */
+    public static final int CLUSTERMSG_TYPE_MEET = 2;          /* Meet "let's join" message */
+    public static final int CLUSTERMSG_TYPE_FAIL = 3;          /* Mark node xxx as failing */
+    public static final int CLUSTERMSG_TYPE_PUBLISH = 4;       /* Pub/Sub Publish propagation */
+    public static final int CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST = 5; /* May I failover? */
+    public static final int CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK = 6;     /* Yes, you have my vote */
+    public static final int CLUSTERMSG_TYPE_UPDATE = 7;        /* Another node slots configuration */
+    public static final int CLUSTERMSG_TYPE_MFSTART = 8;       /* Pause clients for manual failover */
+    public static final int CLUSTERMSG_TYPE_MODULE = 9;        /* Module cluster API message. */
+    public static final int CLUSTERMSG_TYPE_PUBLISHSHARD = 10; /* Pub/Sub Publish shard propagation */
 
     protected final EasyNettyContext context;
     protected byte[] header;
@@ -106,49 +109,86 @@ public class RedisClusterMessage {
     private boolean complete;
 
     public RedisClusterMessage(EasyNettyContext context) {
+        Objects.requireNonNull(context);
         this.context = context;
+    }
+
+    private RedisClusterMessage(byte[] header, byte[] data) {
+        Objects.requireNonNull(header);
+        Objects.requireNonNull(data);
+        if (header.length != OFFSET_DATA) {
+            throw new IllegalArgumentException("Invalid header length.");
+        }
+        this.context = null;
+        this.header = header;
+        this.data = data;
+        this.complete = true;
     }
 
     public static JPromise<Boolean> isClusterBusMessage(EasyNettyContext context) {
         return context.consumeBytes(SIG);
     }
 
+    public static RedisClusterMessage createGossipMessage(int type, int count, int extLen) {
+        if (parseDataType(type) != DateType.GOSSIP) {
+            throw new IllegalArgumentException("Not a gossip type.");
+        }
+        byte[] header = new byte[OFFSET_DATA];
+        System.arraycopy(SIG, 0, header, 0, SIG.length);
+        BytesUtils.setShort(header, OFFSET_TYPE, type);
+        BytesUtils.setShort(header, OFFSET_COUNT, count);
+        byte[] body = new byte[LEN_GOSSIP_DATA * count + extLen];
+        BytesUtils.setInt(header, OFFSET_TOT_LEN, header.length + body.length);
+        return new RedisClusterMessage(header, body);
+    }
+
+    private static DateType parseDataType(int type) {
+        switch (type) {
+            case CLUSTERMSG_TYPE_PING:
+            case CLUSTERMSG_TYPE_PONG:
+            case CLUSTERMSG_TYPE_MEET:
+                return DateType.GOSSIP;
+            case CLUSTERMSG_TYPE_UPDATE:
+                return DateType.UPDATE;
+            case CLUSTERMSG_TYPE_FAIL:
+                return DateType.FAIL;
+            case CLUSTERMSG_TYPE_PUBLISH:
+            case CLUSTERMSG_TYPE_PUBLISHSHARD:
+                return DateType.PUBLISH;
+            case CLUSTERMSG_TYPE_MODULE:
+                return DateType.MODULE;
+            default:
+                return DateType.UNKNOWN;
+        }
+    }
+
+    private void checkType() {
+        int type = getType();
+        dateType = parseDataType(type);
+    }
+
     public JPromise<Void> readHeader() {
         if (header == null) {
+            assert context != null;
             header = context.readBytes(OFFSET_DATA).await();
-            int type = getType();
-            switch (type) {
-                case CLUSTERMSG_TYPE_PING:
-                case CLUSTERMSG_TYPE_PONG:
-                case CLUSTERMSG_TYPE_MEET:
-                    dateType = DateType.GOSSIP;
-                    break;
-                case CLUSTERMSG_TYPE_UPDATE:
-                    dateType = DateType.UPDATE;
-                    break;
-                case CLUSTERMSG_TYPE_FAIL:
-                    dateType = DateType.FAIL;
-                    break;
-                case CLUSTERMSG_TYPE_PUBLISH:
-                case CLUSTERMSG_TYPE_PUBLISHSHARD:
-                    dateType = DateType.PUBLISH;
-                    break;
-                case CLUSTERMSG_TYPE_MODULE:
-                    dateType = DateType.MODULE;
-                    break;
-                default:
-                    dateType = DateType.UNKNOWN;
-            }
+            checkType();
         }
         return JPromise.empty();
     }
 
     public JPromise<Void> readBody() {
-        readHeader().await();
-        long totalLen = getTotalLen();
-        long bodyLen = totalLen - OFFSET_DATA;
-        this.data = context.readBytes((int) bodyLen).await();
-        complete = true;
+        if (data == null) {
+            readHeader().await();
+            long totalLen = getTotalLen();
+            long bodyLen = totalLen - OFFSET_DATA;
+            assert context != null;
+            if (bodyLen > 0) {
+                this.data = context.readBytes((int) bodyLen).await();
+            } else {
+                this.data = EMPTY;
+            }
+            complete = true;
+        }
         return JPromise.empty();
     }
 
@@ -352,6 +392,11 @@ public class RedisClusterMessage {
         // unsigned char state; /* Cluster state from the POV of the sender */
         // unsigned char mflags[3]; /* Message flags: CLUSTERMSG_FLAG[012]_... */
         return BytesUtils.getInt(header, OFFSET_STATE);
+    }
+
+    public void setStateAndMFlags(int stateAndMFlags) {
+        assetHeaderReady();
+        BytesUtils.setInt(header, OFFSET_STATE, stateAndMFlags);
     }
 
     public String getNthNode(int i) {
